@@ -13,7 +13,7 @@ let proc;
 
 before(async () => {
   proc = spawn(process.execPath, ["--no-warnings", path.join(__dirname, "..", "server", "server.js")],
-    { env: { ...process.env, PORT, DB_PATH: path.join(dir, "t.db") }, stdio: "ignore" });
+    { env: { ...process.env, PORT, DB_PATH: path.join(dir, "t.db"), RATE_LIMIT: "1000" }, stdio: "ignore" });
   for (let i = 0; i < 50; i++) { try { await fetch(BASE + "/api/me"); return; } catch { await new Promise(r => setTimeout(r, 100)); } }
   throw new Error("server did not start");
 });
@@ -104,4 +104,69 @@ test("الملفات الثابتة ورؤوس الأمان", async () => {
   assert.equal((await fetch(BASE + "/server/server.js")).status, 404, "لا يكشف كود الخادم");
   assert.equal((await fetch(BASE + "/data/app.db")).status, 404, "لا يكشف قاعدة البيانات");
   assert.equal((await fetch(BASE + "/../package.json")).status, 404);
+});
+
+test("الأستاذ: الأقسام والواجبات وتقدم التلاميذ", async () => {
+  const t = client(), t2 = client(), s1 = client(), s2 = client(), out = client();
+  await t("register", { name: "الأستاذ حمزة", login: "prof@mail.dz", password: "secret1", role: "teacher" });
+  await t2("register", { name: "أستاذ آخر", login: "prof2@mail.dz", password: "secret1", role: "teacher" });
+  await s1("register", { name: "تلميذ أ", login: "s1@mail.dz", password: "secret1", role: "student" });
+  await s2("register", { name: "تلميذ ب", login: "s2@mail.dz", password: "secret1", role: "student" });
+  await out("register", { name: "تلميذ خارج القسم", login: "s3@mail.dz", password: "secret1", role: "student" });
+
+  assert.equal((await s1("classes", { name: "قسم" })).status, 403, "التلميذ لا ينشئ قسماً");
+  const cls = (await t("classes", { name: "3 علوم تجريبية 1" })).body.class;
+  assert.match(cls.code, /^[A-Z2-9]{6}$/);
+  assert.equal((await s1("classes/join", { code: "XXXXXX" })).status, 404);
+  assert.equal((await s1("classes/join", { code: cls.code.toLowerCase() })).status, 200);
+  await s1("classes/join", { code: cls.code }); // الانضمام مرتين لا يكرر
+  await s2("classes/join", { code: cls.code });
+  assert.equal((await t("classes")).body.classes[0].students, 2);
+
+  // واجب من 3 أسئلة في وحدة الأعداد المركبة، سهلة
+  const bad = await t(`classes/${cls.id}/assignments`, { title: "واجب", chapter: "nope", difficulty: 0, count: 3 });
+  assert.equal(bad.status, 400);
+  const hw = (await t(`classes/${cls.id}/assignments`, { title: "واجب المركبة", chapter: "cpx", difficulty: 1, count: 3, due: Date.now() + 3 * 864e5 })).body.assignment;
+  assert.equal(hw.qids.length, 3);
+  assert.equal((await t2(`classes/${cls.id}/assignments`, { title: "x", chapter: "", difficulty: 0, count: 3 })).status, 404, "أستاذ آخر لا يضيف واجباً");
+  assert.equal((await t2(`classes/${cls.id}`)).status, 404, "أستاذ آخر لا يرى القسم");
+
+  // التلميذ أ ينجز الواجب: الأول صحيح ثم خطأ ثم يعيد الأول خطأ (تحتسب المحاولة الأولى فقط)
+  const mine = (await s1("my/classes")).body;
+  assert.equal(mine.classes[0].teacher, "الأستاذ حمزة");
+  assert.equal(mine.assignments[0].qids.length, 3);
+  const [q1, q2, q3] = hw.qids, A = { 16: 1, 17: 2, 18: 0, 47: 1 }; // أجوبة الأسئلة السهلة في المركبة
+  await s1("attempts", { qid: q1, k: A[q1], assignmentId: hw.id });
+  await s1("attempts", { qid: q2, k: (A[q2] + 1) % 4, assignmentId: hw.id });
+  await s1("attempts", { qid: q1, k: (A[q1] + 1) % 4, assignmentId: hw.id });
+  await s1("attempts", { qid: q3, k: A[q3], assignmentId: hw.id });
+  assert.deepEqual((await s1("my/classes")).body.assignments[0].mine, { answered: 3, correct: 2 });
+  assert.equal((await out("attempts", { qid: q1, k: 0, assignmentId: hw.id })).status, 400, "تلميذ خارج القسم لا يجيب في الواجب");
+  assert.equal((await s1("attempts", { qid: 1, k: 1, assignmentId: hw.id })).status, 400, "سؤال ليس في الواجب");
+
+  const detail = (await t(`classes/${cls.id}`)).body;
+  assert.equal(detail.students.length, 2);
+  const a = detail.students.find(s => s.name === "تلميذ أ");
+  assert.equal(a.attempts, 4); assert.deepEqual(a.ch.cpx, [4, 2]);
+  assert.deepEqual(detail.assignments[0].progress[a.id], { answered: 3, correct: 2 });
+  const rep = await t(`classes/${cls.id}/students/${a.id}/attempts`);
+  assert.equal(rep.body.history.length, 4);
+  const outsider = (await out("me")).body.user.id;
+  assert.equal((await t(`classes/${cls.id}/students/${outsider}/attempts`)).status, 404, "لا يرى تلميذاً خارج قسمه");
+
+  assert.equal((await t2(`assignments/${hw.id}/delete`, {})).status, 404);
+  assert.equal((await t(`assignments/${hw.id}/delete`, {})).status, 200);
+  assert.equal((await s1("my/classes")).body.assignments.length, 0);
+  assert.equal((await s1("attempts")).body.history.length, 4, "حذف الواجب لا يحذف إجابات التلميذ");
+});
+
+test("حد محاولات الدخول", async () => {
+  const PORT2 = PORT + 100, dir2 = fs.mkdtempSync(path.join(os.tmpdir(), "bac-rl-"));
+  const p2 = spawn(process.execPath, ["--no-warnings", path.join(__dirname, "..", "server", "server.js")],
+    { env: { ...process.env, PORT: PORT2, DB_PATH: path.join(dir2, "t.db"), RATE_LIMIT: "3" }, stdio: "ignore" });
+  try {
+    for (let i = 0; i < 50; i++) { try { await fetch(`http://127.0.0.1:${PORT2}/api/me`); break; } catch { await new Promise(r => setTimeout(r, 100)); } }
+    const login = () => fetch(`http://127.0.0.1:${PORT2}/api/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: '{"login":"a","password":"b"}' }).then(r => r.status);
+    assert.deepEqual([await login(), await login(), await login(), await login()], [401, 401, 401, 429]);
+  } finally { p2.kill(); fs.rmSync(dir2, { recursive: true, force: true }); }
 });
