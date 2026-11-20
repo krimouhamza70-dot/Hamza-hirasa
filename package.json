@@ -1,0 +1,11 @@
+{
+  "name": "bac-math",
+  "version": "0.2.0",
+  "private": true,
+  "description": "منصة رياضيات الباك",
+  "scripts": {
+    "start": "node --no-warnings server/server.js",
+    "test": "node --no-warnings --test test/*.test.js"
+  },
+  "engines": { "node": ">=22.13" }
+}
