@@ -2,6 +2,11 @@ const KEY = "bacmath.history.v1";
 const $app = document.getElementById("app");
 // السجل: من الخادم إذا كان التلميذ مسجّلاً، وإلا من المتصفح (وضع الضيف)
 let online = false, user = null, cache = null;
+// ALLQ = كل الأسئلة التي يراها المستخدم (منها أسئلة الواجبات وأسئلة الأستاذ قيد المراجعة)
+// QUESTIONS = الأسئلة المنشورة فقط، وهي المستعملة في التدريب والاختبار
+let ALLQ = QUESTIONS.slice();
+const isPublic = x => !x.status || x.status === "approved";
+const chName = id => (CHAPTERS.find(c => c.id === id) || {}).name || "";
 const localHistory = () => { try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch { return []; } };
 const load = () => cache ? cache.slice() : localHistory();
 const save = h => { try { localStorage.setItem(KEY, JSON.stringify(h)); } catch {} };
@@ -47,6 +52,13 @@ async function api(path, body) {
   if (!r.ok) throw new Error(data.error || "تعذّر الاتصال بالخادم، تحقق من الإنترنت");
   return data;
 }
+async function loadBank() {
+  const r = await api("questions");
+  ALLQ = r.questions;
+  QUESTIONS.length = 0; QUESTIONS.push(...ALLQ.filter(isPublic));
+  for (const k of Object.keys(SOLUTIONS)) delete SOLUTIONS[k];
+  Object.assign(SOLUTIONS, r.solutions);
+}
 async function setUser(u) {
   user = u || null; cache = null;
   if (user && user.role === "student") {
@@ -54,6 +66,7 @@ async function setUser(u) {
     if (local.length) { try { await api("attempts/import", { items: local }); localStorage.removeItem(KEY); } catch {} }
     cache = (await api("attempts")).history;
   }
+  if (online) { try { await loadBank(); } catch {} }
   const acc = document.getElementById("acc");
   if (acc) { acc.hidden = !online; acc.textContent = user ? "👤 " + user.name : "دخول / حساب جديد"; }
 }
@@ -69,25 +82,23 @@ const statsOf = ch => CHAPTERS.map(c => { const [a, k] = ch[c.id] || [0, 0]; ret
 
 // ---------- الحل المفصل ----------
 // k = رقم الخيار الذي اختاره التلميذ (أو undefined إن لم يُجب)
-function steps(q) {
-  const sol = typeof SOLUTIONS !== "undefined" && SOLUTIONS[q.id];
+function steps(q, sol = SOLUTIONS[q.id]) {
   return sol ? `<ol class="steps">${sol.s.map(x => `<li>${M(x)}</li>`).join("")}</ol>` : `<p>${M(q.e)}</p>`;
 }
-function correction(q, k) {
-  const sol = typeof SOLUTIONS !== "undefined" && SOLUTIONS[q.id];
+function correction(q, k, sol = SOLUTIONS[q.id]) {
   if (k === q.a) return `<div class="expl"><b class="okt">✅ إجابة صحيحة</b><p>${M(q.e)}</p>
-    <details><summary>عرض الحل المفصل</summary>${steps(q)}</details></div>`;
+    <details><summary>عرض الحل المفصل</summary>${steps(q, sol)}</details></div>`;
   const why = k !== undefined && sol && sol.w[k];
   return `<div class="expl wrong">
     <b class="badt">${k === undefined ? "⏳ لم تُجب عن هذا السؤال" : `❌ إجابة خاطئة: اخترت ${M(q.o[k])}`}</b>
     ${why ? `<div class="why"><b>لماذا هذا الجواب خاطئ؟</b><br>${M(why)}</div>` : ""}
     <p><b>الجواب الصحيح:</b> ${M(q.o[q.a])}</p>
-    <b>الحل المفصل:</b>${steps(q)}</div>`;
+    <b>الحل المفصل:</b>${steps(q, sol)}</div>`;
 }
 
 // ---------- الصفحة الرئيسية ----------
 function home() {
-  const st = chapterStats(load(), CHAPTERS, QUESTIONS), p = predict(st);
+  const st = chapterStats(load(), CHAPTERS, ALLQ), p = predict(st);
   const weak = st.filter(c => c.attempts).sort((a, b) => a.mastery - b.mastery)[0];
   $app.innerHTML = `
   ${user && user.role === "parent" ? `<div class="card row"><span>أنت مسجّل كولي أمر. نتائج أبنائك في صفحة حسابك.</span><a class="btn" href="#account">متابعة أبنائي</a></div>` : ""}
@@ -131,7 +142,7 @@ async function homework(id) {
   loading();
   let a; try { a = (await api("my/classes")).assignments.find(x => x.id === Number(id)); } catch (e) { return failed(e, "#home"); }
   if (!a) return failed(new Error("هذا الواجب غير موجود أو حذفه الأستاذ"), "#home");
-  runQuiz({ questions: a.qids.map(i => QUESTIONS.find(q => q.id === i)).filter(Boolean), exam: false, title: a.title, hw: a.id });
+  runQuiz({ questions: a.qids.map(i => ALLQ.find(q => q.id === i)).filter(Boolean), exam: false, title: a.title, hw: a.id });
 }
 
 // ---------- جلسة أسئلة (تدريب أو اختبار) ----------
@@ -187,7 +198,7 @@ function runQuiz({ questions, exam, title, hw = null }) {
 // ---------- تقرير الولي ----------
 // h = سجل التلميذ، who = اسمه (عند عرض الولي لتقرير ابنه)
 function report(h = load(), who = null, back = "#account", backLabel = "العودة إلى قائمة أبنائي") {
-  const st = chapterStats(h, CHAPTERS, QUESTIONS), p = predict(st);
+  const st = chapterStats(h, CHAPTERS, ALLQ), p = predict(st);
   const last = h.length ? new Date(Math.max(...h.map(r => r.ts))).toLocaleDateString("ar-DZ") : "—";
   $app.innerHTML = `<div class="card"><h2>تقرير متابعة ${who ? esc(who) : "التلميذ"}</h2>
     ${who ? `<p><a href="${back}">← ${backLabel}</a></p>` : ""}
@@ -200,7 +211,7 @@ function report(h = load(), who = null, back = "#account", backLabel = "العو
         <td>${!c.attempts ? "لم تُدرَّس بعد" : c.mastery < .5 ? "⚠️ تحتاج مراجعة" : c.mastery < .75 ? "جيد — واصل" : "ممتاز"}</td></tr>`).join("")}
     </table></div>
     <h2 style="margin-top:16px">حسب مستوى الصعوبة</h2>
-    ${[1, 2, 3].map(d => { const ids = new Set(QUESTIONS.filter(q => q.d === d).map(q => q.id)), x = h.filter(r => ids.has(r.qid)), c = x.filter(r => r.ok).length;
+    ${[1, 2, 3].map(d => { const ids = new Set(ALLQ.filter(q => q.d === d).map(q => q.id)), x = h.filter(r => ids.has(r.qid)), c = x.filter(r => r.ok).length;
       return `<p>${DIFF[d]}: <b>${x.length ? pct(c / x.length) + "%" : "—"}</b> <span class="mute">(${c}/${x.length})</span></p>`; }).join("")}
     <p class="noprint row" style="margin-top:12px;justify-content:flex-start">${inFrame ? "" : `<button id="prt">طباعة</button>`}
       ${who || cache ? "" : `<button class="sec" id="clr">مسح النتائج</button>`}</p></div>`;
@@ -309,6 +320,9 @@ async function teacherHome() {
           <span class="mute">${nOf(c.students, STUD)} · الرمز <span dir="ltr">${esc(c.code)}</span></span></div>
           <a class="btn sec" href="#class-${c.id}">فتح القسم</a></div>`).join("")
         : `<p class="mute">لم تُنشئ أي قسم بعد. أنشئ قسماً ثم أعطِ رمزه لتلاميذك.</p>`}</div>
+    <div class="card row"><div><h2>بنك أسئلتي</h2><p class="mute">أضف أسئلتك وحلولها. تُستعمل فوراً في واجبات أقسامك، وتظهر لكل التلاميذ بعد المراجعة.</p></div>
+      <a class="btn sec" href="#questions">أسئلتي</a></div>
+    ${user.admin ? `<div class="card row"><span>أنت مدير المنصة.</span><a class="btn" href="#review">مراجعة أسئلة الأساتذة</a></div>` : ""}
     <form class="card" id="fClass"><h2>إنشاء قسم جديد</h2><p class="msg" id="msg" role="alert"></p>
       <label>اسم القسم<input id="cName" required maxlength="60" placeholder="مثال: 3 علوم تجريبية 2"></label>
       <button type="submit">إنشاء القسم</button></form>
@@ -372,7 +386,8 @@ async function classPage(id) {
     <p class="mute" id="hAvail"></p>
     <button type="submit">إرسال الواجب إلى القسم</button></form>`;
   const avail = () => {
-    const ch = val("hCh"), d = +val("hD"), n = QUESTIONS.filter(q => (!ch || q.ch === ch) && (!d || q.d === d)).length;
+    const ch = val("hCh"), d = +val("hD");
+    const n = ALLQ.filter(q => (isPublic(q) || (q.mine && q.status === "pending")) && (!ch || q.ch === ch) && (!d || q.d === d)).length;
     document.getElementById("hAvail").textContent = n ? `متوفر ${nOf(n, QS)} بهذه الشروط، وتُختار الأسئلة عشوائياً منها.` : "لا توجد أسئلة بهذه الشروط، غيّر الوحدة أو الصعوبة.";
   };
   ["hCh", "hD"].forEach(i => document.getElementById(i).onchange = avail); avail();
@@ -381,16 +396,155 @@ async function classPage(id) {
     await api(`classes/${cls.id}/assignments`, { title: val("hTitle"), chapter: val("hCh"), difficulty: +val("hD"), count: +val("hN"), due });
     classPage(cls.id);
   });
-  document.querySelectorAll(".del").forEach(b => b.onclick = async () => { // تأكيد بضغطتين
-    if (!b.dataset.armed) { b.dataset.armed = "1"; b.textContent = "اضغط مرة أخرى لتأكيد الحذف"; return; }
-    try { await api(`assignments/${b.dataset.id}/delete`, {}); classPage(cls.id); } catch (e) { b.textContent = e.message; }
-  });
+  document.querySelectorAll(".del").forEach(b => twoClick(b, async () => { await api(`assignments/${b.dataset.id}/delete`, {}); classPage(cls.id); }));
 }
 async function teacherStudent(cid, sid) {
   if (!user || user.role !== "teacher") return account();
   loading();
   try { const r = await api(`classes/${cid}/students/${sid}/attempts`); report(r.history, r.name, `#class-${cid}`, "العودة إلى القسم"); }
   catch (e) { failed(e, `#class-${cid}`); }
+}
+
+// ---------- بنك أسئلة الأستاذ ----------
+const attr = t => esc(String(t)).replace(/"/g, "&quot;");
+const STATUS = { pending: "بانتظار المراجعة", approved: "منشور", rejected: "مرفوض" };
+function twoClick(btn, action) { // تأكيد بضغطتين بدل نافذة confirm
+  btn.onclick = async () => {
+    if (!btn.dataset.armed) { btn.dataset.armed = "1"; btn.textContent = "اضغط مرة أخرى للتأكيد"; return; }
+    try { await action(); } catch (e) { btn.textContent = e.message; }
+  };
+}
+async function myQuestions() {
+  if (!user || user.role !== "teacher") return account();
+  loading();
+  try { await loadBank(); } catch (e) { return failed(e); }
+  const mine = ALLQ.filter(x => x.mine).sort((a, b) => b.id - a.id);
+  const count = st => mine.filter(x => x.status === st).length;
+  $app.innerHTML = `<p><a href="#account">← حسابي</a></p>
+    <div class="card row"><div><h2>بنك أسئلتي</h2>
+      <p class="mute">${mine.length ? `${count("approved")} منشور · ${count("pending")} بانتظار المراجعة · ${count("rejected")} مرفوض` : "لم تضف أي سؤال بعد."}</p></div>
+      <a class="btn" href="#qedit">+ سؤال جديد</a></div>
+    ${user.admin ? `<div class="card row"><span>أنت مدير المنصة.</span><a class="btn sec" href="#review">مراجعة أسئلة الأساتذة</a></div>` : ""}
+    ${mine.length ? `<div class="card">${mine.map(x => `<div class="qitem">
+        <div class="row"><span><span class="chip ${x.status}">${STATUS[x.status]}</span> <span class="mute">${chName(x.ch)} · ${DIFF[x.d]}</span></span>
+          <span class="row">${x.status !== "approved" || user.admin ? `<a class="btn sec" href="#qedit-${x.id}">تعديل</a>` : ""}
+            ${x.status !== "approved" ? `<button class="sec del" type="button" data-id="${x.id}">حذف</button>` : ""}</span></div>
+        <p class="q">${M(x.q)}</p>
+        ${x.status === "rejected" && x.note ? `<div class="why"><b>ملاحظة المراجع:</b> ${esc(x.note)}</div>` : ""}</div>`).join("")}</div>` : ""}`;
+  document.querySelectorAll(".del").forEach(b => twoClick(b, async () => { await api(`questions/${b.dataset.id}/delete`, {}); myQuestions(); }));
+}
+
+const SYMBOLS = ["²", "³", "ⁿ", "√", "π", "∞", "≤", "≥", "≠", "⇔", "←", "∫", "Σ", "Δ", "θ", "∈", "ℝ", "ℂ", "−", "×", "·", "₀", "₁", "ₙ", "ₙ₊₁", "e^x", "ln", "lim"];
+async function editor(id) {
+  if (!user || user.role !== "teacher") return account();
+  let q0 = null, sol0 = { s: [], w: {} };
+  if (id) {
+    loading();
+    try { await loadBank(); } catch (e) { return failed(e, "#questions"); }
+    q0 = ALLQ.find(x => x.id === Number(id)); sol0 = q0 && SOLUTIONS[q0.id];
+    if (!q0 && user.admin) { // سؤال أستاذ آخر بانتظار المراجعة
+      try { const r = (await api("review")).questions.find(x => x.id === Number(id)); if (r) { q0 = r; sol0 = { s: r.s, w: r.w }; } } catch {}
+    }
+    if (!q0) return failed(new Error("السؤال غير موجود"), "#questions");
+    if (!q0.mine && !user.admin) return failed(new Error("لا يمكنك تعديل هذا السؤال"), "#questions");
+  }
+  const back = user.admin && q0 && !q0.mine ? "#review" : "#questions";
+  const st = { o: q0 ? q0.o.slice() : ["", "", "", ""], a: q0 ? q0.a : 0 };
+  st.w = st.o.map((_, i) => (sol0 && sol0.w[i]) || "");
+  $app.innerHTML = `<p><a href="${back}">← رجوع</a></p>
+  <form class="card" id="fQ"><h2>${q0 ? "تعديل السؤال" : "سؤال جديد"}</h2>
+    ${q0 && q0.status === "rejected" && q0.note ? `<div class="why"><b>ملاحظة المراجع:</b> ${esc(q0.note)}</div>` : ""}
+    <div class="symbols" id="sym">${SYMBOLS.map(x => `<button type="button" class="sec" dir="ltr">${x}</button>`).join("")}</div>
+    <p class="mute small">اضغط على رمز لإدراجه في الخانة التي تكتب فيها.</p>
+    <div class="grid2">
+      <label>الوحدة<select id="eCh">${CHAPTERS.map(c => `<option value="${c.id}"${q0 && q0.ch === c.id ? " selected" : ""}>${c.name}</option>`).join("")}</select></label>
+      <label>الصعوبة<select id="eD">${[1, 2, 3].map(d => `<option value="${d}"${(q0 ? q0.d : 2) === d ? " selected" : ""}>${DIFF[d]}</option>`).join("")}</select></label>
+    </div>
+    <label>نص السؤال<textarea id="eQ" rows="2" maxlength="600" required>${q0 ? esc(q0.q) : ""}</textarea></label>
+    <fieldset class="opts"><legend>الخيارات: حدّد الجواب الصحيح، واشرح تحت كل خيار خاطئ سبب الخطأ</legend>
+      <div id="optRows"></div><button type="button" class="sec" id="addOpt">+ إضافة خيار</button></fieldset>
+    <label>شرح مختصر (يظهر عند الإجابة الصحيحة)<textarea id="eE" rows="2" maxlength="600" required>${q0 ? esc(q0.e) : ""}</textarea></label>
+    <label>خطوات الحل المفصل (اكتب كل خطوة في سطر)<textarea id="eS" rows="5" required>${esc(((sol0 && sol0.s) || []).join("\n"))}</textarea></label>
+    <p class="msg" id="msg" role="alert"></p>
+    <button type="submit">${q0 ? "حفظ التعديلات" : "إرسال السؤال للمراجعة"}</button>
+    ${!user.admin ? `<p class="mute small">يمكنك استعمال السؤال في واجبات أقسامك فوراً، ويظهر لكل التلاميذ بعد قبوله.</p>` : ""}
+  </form>
+  <div class="card"><h2>معاينة كما يراها التلميذ</h2><div id="prev"></div>
+    <label>معاينة التصحيح عند اختيار<select id="pK"></select></label><div id="prevFb"></div></div>`;
+  const form = document.getElementById("fQ"), rows = document.getElementById("optRows");
+  const readRows = () => { st.o = st.o.map((_, i) => val("o" + i)); st.w = st.w.map((_, i) => document.getElementById("w" + i)?.value || ""); };
+  const drawRows = () => {
+    rows.innerHTML = st.o.map((o, i) => `<div class="optrow${i === st.a ? " right" : ""}">
+      <div class="row"><label class="radio"><input type="radio" name="right" value="${i}"${i === st.a ? " checked" : ""}> صحيح</label>
+        <input id="o${i}" value="${attr(o)}" placeholder="الخيار ${i + 1}" maxlength="200" required>
+        ${st.o.length > 2 ? `<button type="button" class="sec rm" data-i="${i}" aria-label="حذف الخيار ${i + 1}">✕</button>` : ""}</div>
+      ${i === st.a ? "" : `<textarea id="w${i}" rows="1" maxlength="400" placeholder="لماذا هذا الخيار خاطئ؟ ما الخطأ الشائع الذي يقود إليه؟">${esc(st.w[i])}</textarea>`}</div>`).join("");
+    rows.querySelectorAll("input[name=right]").forEach(r => r.onchange = () => { readRows(); st.a = +r.value; drawRows(); preview(); });
+    rows.querySelectorAll(".rm").forEach(b => b.onclick = () => {
+      readRows(); const i = +b.dataset.i; st.o.splice(i, 1); st.w.splice(i, 1);
+      if (st.a === i) st.a = 0; else if (st.a > i) st.a--; drawRows(); preview();
+    });
+    document.getElementById("addOpt").hidden = st.o.length >= 6;
+  };
+  const build = () => {
+    readRows();
+    return { ch: val("eCh"), d: +val("eD"), q: val("eQ").trim(), o: st.o.map(x => x.trim()), a: st.a, e: val("eE").trim(),
+      s: val("eS").split("\n").map(x => x.trim()).filter(Boolean),
+      w: Object.fromEntries(st.w.map((x, i) => [i, x.trim()]).filter(([i, x]) => x && Number(i) !== st.a)) };
+  };
+  const preview = () => {
+    const x = build(), pk = document.getElementById("pK"), cur = pk.value;
+    document.getElementById("prev").innerHTML = `<p class="q"><span class="tag">${DIFF[x.d]}</span> ${M(x.q || "…")}</p>
+      ${x.o.map((o, i) => `<div class="opt${i === x.a ? " ok" : ""}">${M(o || "…")}</div>`).join("")}`;
+    pk.innerHTML = x.o.map((_, i) => `<option value="${i}">${i === x.a ? "الجواب الصحيح" : `الخيار ${i + 1} (خاطئ)`}</option>`).join("");
+    pk.value = cur !== "" && +cur < x.o.length ? cur : String(x.o.findIndex((_, i) => i !== x.a));
+    document.getElementById("prevFb").innerHTML = correction({ ...x, id: 0 }, +pk.value, { s: x.s.length ? x.s : ["…"], w: x.w });
+  };
+  document.getElementById("addOpt").onclick = () => { readRows(); st.o.push(""); st.w.push(""); drawRows(); preview(); };
+  document.getElementById("pK").onchange = preview;
+  form.addEventListener("input", preview);
+  let last = null; // آخر خانة كتابة لإدراج الرموز فيها
+  form.addEventListener("focusin", e => { if (e.target.matches("textarea, input:not([type=radio])")) last = e.target; });
+  document.querySelectorAll("#sym button").forEach(b => {
+    b.onmousedown = e => e.preventDefault(); // لا تفقد الخانة التركيز
+    b.onclick = () => {
+      if (!last) return;
+      const i = last.selectionStart ?? last.value.length, j = last.selectionEnd ?? i;
+      last.value = last.value.slice(0, i) + b.textContent + last.value.slice(j);
+      last.focus(); last.setSelectionRange(i + b.textContent.length, i + b.textContent.length); preview();
+    };
+  });
+  drawRows(); preview();
+  onSubmit(form, async () => { await api(q0 ? `questions/${q0.id}` : "questions", build()); location.hash = back; });
+}
+
+async function review() {
+  if (!user || !user.admin) return account();
+  loading();
+  let list; try { list = (await api("review")).questions; } catch (e) { return failed(e); }
+  $app.innerHTML = `<p><a href="#questions">← بنك أسئلتي</a></p>
+    <div class="card"><h2>مراجعة أسئلة الأساتذة</h2>
+      <p class="mute">${list.length ? `${nOf(list.length, QS)} بانتظار المراجعة. بعد القبول يظهر السؤال لكل تلاميذ المنصة.` : "لا توجد أسئلة بانتظار المراجعة."}</p></div>
+    ${list.map(x => `<div class="card rv" data-id="${x.id}">
+      <div class="row"><span class="mute">من: <b>${esc(x.author || "—")}</b> · ${chName(x.ch)} · ${DIFF[x.d]}</span><a href="#qedit-${x.id}">تعديل قبل القبول</a></div>
+      <p class="q">${M(x.q)}</p>
+      ${x.o.map((o, i) => `<div class="opt${i === x.a ? " ok" : ""}">${M(o)}
+        ${i === x.a ? "" : x.w[i] ? `<div class="mute small">سبب الخطأ: ${M(x.w[i])}</div>` : `<div class="badt small">لا يوجد شرح لسبب الخطأ</div>`}</div>`).join("")}
+      <p><b>الشرح المختصر:</b> ${M(x.e)}</p>
+      <b>الحل المفصل:</b><ol class="steps">${x.s.map(t => `<li>${M(t)}</li>`).join("")}</ol>
+      <label>ملاحظة للأستاذ (مطلوبة عند الرفض)<textarea rows="2" maxlength="500"></textarea></label>
+      <p class="msg" role="alert"></p>
+      <div class="row" style="justify-content:flex-start"><button type="button" class="ap">قبول ونشر</button><button type="button" class="sec rj">رفض</button></div></div>`).join("")}`;
+  document.querySelectorAll(".rv").forEach(card => {
+    const decide = async decision => {
+      try {
+        await api(`questions/${card.dataset.id}/review`, { decision, note: card.querySelector("textarea").value });
+        card.innerHTML = `<p class="${decision === "approve" ? "okt" : "badt"}">${decision === "approve" ? "✅ قُبل السؤال ونُشر لكل التلاميذ." : "رُفض السؤال وأُرسلت ملاحظتك إلى الأستاذ."}</p>`;
+      } catch (e) { card.querySelector(".msg").textContent = e.message; }
+    };
+    card.querySelector(".ap").onclick = () => decide("approve");
+    card.querySelector(".rj").onclick = () => decide("reject");
+  });
 }
 
 // ---------- اختيار مستوى الصعوبة ----------
@@ -425,6 +579,9 @@ function route() {
   if (page === "class" && num(arg)) return classPage(arg);
   if (page === "student" && num(arg) && num(lvl)) return teacherStudent(arg, lvl);
   if (page === "hw" && num(arg)) return homework(arg);
+  if (page === "questions") return myQuestions();
+  if (page === "qedit") return editor(num(arg) ? arg : null);
+  if (page === "review") return review();
   if (page === "account") return account();
   if (page === "child" && /^\d+$/.test(arg || "")) return childReport(arg);
   home();

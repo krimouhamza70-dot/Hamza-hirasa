@@ -13,7 +13,7 @@ let proc;
 
 before(async () => {
   proc = spawn(process.execPath, ["--no-warnings", path.join(__dirname, "..", "server", "server.js")],
-    { env: { ...process.env, PORT, DB_PATH: path.join(dir, "t.db"), RATE_LIMIT: "1000" }, stdio: "ignore" });
+    { env: { ...process.env, PORT, DB_PATH: path.join(dir, "t.db"), RATE_LIMIT: "1000", ADMIN_LOGINS: "Admin@Mail.dz, 0770 00 00 00" }, stdio: "ignore" });
   for (let i = 0; i < 50; i++) { try { await fetch(BASE + "/api/me"); return; } catch { await new Promise(r => setTimeout(r, 100)); } }
   throw new Error("server did not start");
 });
@@ -169,4 +169,69 @@ test("حد محاولات الدخول", async () => {
     const login = () => fetch(`http://127.0.0.1:${PORT2}/api/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: '{"login":"a","password":"b"}' }).then(r => r.status);
     assert.deepEqual([await login(), await login(), await login(), await login()], [401, 401, 401, 429]);
   } finally { p2.kill(); fs.rmSync(dir2, { recursive: true, force: true }); }
+});
+
+test("بنك الأسئلة: إضافة الأستاذ ومراجعة المدير", async () => {
+  const t = client(), t2 = client(), admin = client(), s = client(), guest = client();
+  await t("register", { name: "أستاذة ليلى", login: "leila@mail.dz", password: "secret1", role: "teacher" });
+  await t2("register", { name: "أستاذ آخر", login: "other@mail.dz", password: "secret1", role: "teacher" });
+  const me = (await admin("register", { name: "المدير", login: "admin@mail.dz", password: "secret1", role: "teacher" })).body.user;
+  assert.equal(me.admin, true, "المدير يُعرف من ADMIN_LOGINS");
+  assert.equal((await t("me")).body.user.admin, undefined);
+  await s("register", { name: "تلميذ", login: "stud@mail.dz", password: "secret1", role: "student" });
+
+  const before = (await guest("questions")).body;
+  assert.equal(before.questions.length, 61);
+  assert.equal(before.solutions[10].s.length, 5);
+
+  const good = { ch: "exp", d: 2, q: "ما قيمة e^(ln 3) ؟", o: ["3", "ln 3", "e³"], a: 0, e: "exp و ln متعاكستان.",
+    s: ["e^(ln a) = a لكل a > 0.", "إذن e^(ln 3) = 3."], w: { 1: "الأسية تلغي ln.", 2: "الأس هو ln 3 وليس 3.", 0: "يُتجاهل: هذا الجواب الصحيح" } };
+  assert.equal((await s("questions", good)).status, 403, "التلميذ لا يضيف أسئلة");
+  for (const [bad, why] of [[{ ...good, ch: "x" }, "وحدة"], [{ ...good, d: 5 }, "صعوبة"], [{ ...good, o: ["3"] }, "خيار واحد"],
+    [{ ...good, o: ["3", "3"] }, "خياران متطابقان"], [{ ...good, a: 7 }, "جواب خارج الخيارات"], [{ ...good, s: [] }, "بدون حل"], [{ ...good, q: "" }, "بدون نص"]])
+    assert.equal((await t("questions", bad)).status, 400, why);
+
+  const { id } = (await t("questions", good)).body;
+  assert.ok(id >= 10001, "رقم سؤال الأستاذ لا يتعارض مع الأسئلة المدمجة");
+  assert.equal((await guest("questions")).body.questions.length, 61, "السؤال غير المراجع لا يظهر للجميع");
+  const mineQ = (await t("questions")).body.questions.find(x => x.id === id);
+  assert.equal(mineQ.status, "pending"); assert.equal(mineQ.mine, true);
+  assert.deepEqual((await t("questions")).body.solutions[id].w, { 1: "الأسية تلغي ln.", 2: "الأس هو ln 3 وليس 3." }, "يتجاهل شرح الخطأ على الجواب الصحيح");
+  assert.equal((await t2("questions")).body.questions.some(x => x.id === id), false, "أستاذ آخر لا يرى السؤال");
+  assert.equal((await t2(`questions/${id}`, good)).status, 403, "أستاذ آخر لا يعدل السؤال");
+  assert.equal((await s("attempts", { qid: id, k: 0 })).status, 400, "التلميذ لا يجيب على سؤال غير مراجع خارج الواجبات");
+
+  // الأستاذ يستعمل سؤاله في واجب قبل المراجعة
+  const cls = (await t("classes", { name: "قسم ليلى" })).body.class;
+  await s("classes/join", { code: cls.code });
+  const hw = (await t(`classes/${cls.id}/assignments`, { title: "واجب", chapter: "exp", difficulty: 2, count: 20 })).body.assignment;
+  assert.ok(hw.qids.includes(id), "أسئلة الأستاذ قيد المراجعة تدخل في واجباته");
+  const other = (await t2("classes", { name: "قسم آخر" })).body.class;
+  const hw2 = (await t2(`classes/${other.id}/assignments`, { title: "واجب", chapter: "exp", difficulty: 2, count: 20 })).body.assignment;
+  assert.ok(!hw2.qids.includes(id), "ولا تدخل في واجبات غيره");
+  assert.ok((await s("questions")).body.questions.some(x => x.id === id), "التلميذ يرى سؤال واجبه");
+  assert.equal((await s("attempts", { qid: id, k: 0, assignmentId: hw.id })).body.ok, true);
+
+  // المراجعة
+  assert.equal((await t("review")).status, 403, "الأستاذ العادي ليس مديراً");
+  const pending = (await admin("review")).body.questions;
+  assert.equal(pending.length, 1); assert.equal(pending[0].author, "أستاذة ليلى");
+  assert.equal((await admin(`questions/${id}/review`, { decision: "reject", note: "" })).status, 400, "الرفض يتطلب سبباً");
+  assert.equal((await admin(`questions/${id}/review`, { decision: "reject", note: "صحح الخيار الثالث" })).status, 200);
+  const rejected = (await t("questions")).body.questions.find(x => x.id === id);
+  assert.equal(rejected.status, "rejected"); assert.equal(rejected.note, "صحح الخيار الثالث");
+  // الأستاذ يصحح فيعود إلى المراجعة
+  assert.equal((await t(`questions/${id}`, { ...good, o: ["3", "ln 3", "3e"] })).body.status, "pending");
+  assert.equal((await admin(`questions/${id}/review`, { decision: "approve" })).status, 200);
+  assert.equal((await admin(`questions/${id}/review`, { decision: "approve" })).status, 404, "لا يُراجع مرتين");
+  const pub = (await guest("questions")).body;
+  assert.equal(pub.questions.length, 62, "بعد القبول يظهر للجميع");
+  assert.equal(pub.questions.find(x => x.id === id).mine, undefined);
+  assert.equal((await t(`questions/${id}`, good)).status, 403, "الأستاذ لا يعدل سؤالاً منشوراً");
+  assert.equal((await admin(`questions/${id}`, { ...good, e: "شرح محسّن" })).body.status, "approved", "المدير يعدل دون إلغاء النشر");
+  assert.equal((await t(`questions/${id}/delete`, {})).status, 403);
+  assert.equal((await admin(`questions/${id}/delete`, {})).status, 400, "لا يُحذف سؤال أجاب عنه تلاميذ");
+  // المدير يعدل سؤالاً مدمجاً
+  assert.equal((await admin("questions/1", { ...good, ch: "lim", d: 1 })).status, 200);
+  assert.equal((await t2("questions/1", good)).status, 403);
 });
