@@ -23,8 +23,12 @@ function myStream() {
   try { return localStorage.getItem(SKEY) || "se"; } catch { return "se"; }
 }
 const chaptersOf = sid => streamOf(sid).ch.map(id => CHAPTERS.find(c => c.id === id)).filter(Boolean);
-const hasQ = c => QUESTIONS.some(q => q.ch === c.id);
-const statChs = sid => chaptersOf(sid).filter(hasQ); // الوحدات التي فيها أسئلة تدخل في حساب العلامة
+// أسئلة الشعبة: من وحداتها، بدون أنواع الدوال غير المقررة فيها (مثلاً المثلثية في آداب وفلسفة)
+const tagsOf = q => q.tags || (q.tags = questionTags(q, (SOLUTIONS[q.id] || {}).s || []));
+const excluded = (q, sid) => (streamOf(sid).exclude || []).some(t => tagsOf(q).includes(t));
+const forStream = (list, sid) => list.filter(q => streamOf(sid).ch.includes(q.ch) && !excluded(q, sid));
+const hasQ = (c, sid) => forStream(QUESTIONS, sid).some(q => q.ch === c.id);
+const statChs = sid => chaptersOf(sid).filter(c => hasQ(c, sid)); // الوحدات التي فيها أسئلة تدخل في حساب العلامة
 async function setStream(id) {
   if (user && user.role === "student") user = (await api("me/stream", { stream: id })).user;
   else try { localStorage.setItem(SKEY, id); } catch {}
@@ -82,6 +86,7 @@ async function loadBank() {
   QUESTIONS.length = 0; QUESTIONS.push(...ALLQ.filter(isPublic));
   for (const k of Object.keys(SOLUTIONS)) delete SOLUTIONS[k];
   Object.assign(SOLUTIONS, r.solutions);
+  ALLQ.forEach(q => { delete q.tags; tagsOf(q); });
 }
 async function setUser(u) {
   user = u || null; cache = null;
@@ -389,7 +394,7 @@ async function classPage(id) {
   loading();
   let d; try { d = await api(`classes/${id}`); } catch (e) { return failed(e); }
   const { students, assignments } = d, cls = d.class, active = students.filter(s => s.attempts);
-  const chs = chaptersOf(cls.stream), pchs = chs.filter(hasQ);
+  const chs = chaptersOf(cls.stream), pchs = chs.filter(c => hasQ(c, cls.stream));
   const preds = active.map(s => predict(statsOf(s.ch, pchs)).score);
   const avgPred = preds.length ? preds.reduce((a, b) => a + b, 0) / preds.length : null;
   const tot = {};
@@ -426,7 +431,8 @@ async function classPage(id) {
     <button type="submit">إرسال الواجب إلى القسم</button></form>`;
   const avail = () => {
     const ch = val("hCh"), d = +val("hD");
-    const n = ALLQ.filter(q => (isPublic(q) || (q.mine && q.status === "pending")) && (ch ? q.ch === ch : cls && chs.some(c => c.id === q.ch)) && (!d || q.d === d)).length;
+    const n = ALLQ.filter(q => (isPublic(q) || (q.mine && q.status === "pending")) && !excluded(q, cls.stream)
+      && (ch ? q.ch === ch : chs.some(c => c.id === q.ch)) && (!d || q.d === d)).length;
     document.getElementById("hAvail").textContent = n ? `متوفر ${nOf(n, QS)} بهذه الشروط، وتُختار الأسئلة عشوائياً منها.` : "لا توجد أسئلة بهذه الشروط، غيّر الوحدة أو الصعوبة.";
   };
   ["hCh", "hD"].forEach(i => document.getElementById(i).onchange = avail); avail();
@@ -504,6 +510,7 @@ async function editor(id) {
       <div id="optRows"></div><button type="button" class="sec" id="addOpt">+ إضافة خيار</button></fieldset>
     <label>شرح مختصر (يظهر عند الإجابة الصحيحة)<textarea id="eE" rows="2" maxlength="600" required>${q0 ? esc(q0.e) : ""}</textarea></label>
     <label>خطوات الحل المفصل (اكتب كل خطوة في سطر)<textarea id="eS" rows="5" required>${esc(((sol0 && sol0.s) || []).join("\n"))}</textarea></label>
+    <p class="mute small" id="eTags"></p>
     <p class="msg" id="msg" role="alert"></p>
     <button type="submit">${q0 ? "حفظ التعديلات" : "إرسال السؤال للمراجعة"}</button>
     ${!user.admin ? `<p class="mute small">يمكنك استعمال السؤال في واجبات أقسامك فوراً، ويظهر لكل التلاميذ بعد قبوله.</p>` : ""}
@@ -538,6 +545,9 @@ async function editor(id) {
     pk.innerHTML = x.o.map((_, i) => `<option value="${i}">${i === x.a ? "الجواب الصحيح" : `الخيار ${i + 1} (خاطئ)`}</option>`).join("");
     pk.value = cur !== "" && +cur < x.o.length ? cur : String(x.o.findIndex((_, i) => i !== x.a));
     document.getElementById("prevFb").innerHTML = correction({ ...x, id: 0 }, +pk.value, { s: x.s.length ? x.s : ["…"], w: x.w });
+    const tg = questionTags(x, x.s), TN = { trig: "دوال مثلثية", exp: "دالة أسية", log: "دالة لوغاريتمية" };
+    const out = STREAMS.filter(st => st.ch.includes(x.ch) && (st.exclude || []).some(t => tg.includes(t))).map(st => st.name);
+    document.getElementById("eTags").textContent = tg.length ? `يحتوي السؤال على: ${tg.map(t => TN[t]).join("، ")}.${out.length ? ` لن يظهر لشعبة ${out.join(" و")} لأنها غير مقررة فيها.` : ""}` : "";
   };
   document.getElementById("addOpt").onclick = () => { readRows(); st.o.push(""); st.w.push(""); drawRows(); preview(); };
   document.getElementById("pK").onchange = preview;
@@ -661,7 +671,7 @@ function bacExercise(id) {
 
 // ---------- اختيار مستوى الصعوبة ----------
 function chooser(ch) {
-  const qs = QUESTIONS.filter(q => q.ch === ch.id);
+  const qs = QUESTIONS.filter(q => q.ch === ch.id && !excluded(q, myStream()));
   $app.innerHTML = `<div class="card"><h2>${ch.name}</h2><p class="mute">اختر مستوى الصعوبة</p>
     <div class="grid">${[0, 1, 2, 3].map(d => { const n = d ? qs.filter(q => q.d === d).length : qs.length;
       return n ? `<a class="btn ${d ? "sec" : ""}" href="#practice-${ch.id}-${d}">${d ? DIFF[d] : "الكل"} (${n})</a>` : ""; }).join("")}</div></div>`;
@@ -669,7 +679,7 @@ function chooser(ch) {
 
 // اختبار متوازن: سؤال من كل وحدة ثم سؤالان إضافيان من الأصعب
 function examQuestions() { // من وحدات شعبة التلميذ
-  const ids = statChs(myStream()).map(c => c.id), pool = QUESTIONS.filter(q => ids.includes(q.ch));
+  const sid = myStream(), ids = statChs(sid).map(c => c.id), pool = forStream(QUESTIONS, sid);
   const picked = ids.map(id => shuffle(pool.filter(q => q.ch === id))[0]).filter(Boolean);
   const others = pool.filter(q => !picked.includes(q));
   return shuffle(picked.concat(shuffle(others.filter(q => q.d >= 2)), shuffle(others.filter(q => q.d < 2))).slice(0, 10));
@@ -684,7 +694,7 @@ function route() {
   if (page === "practice") {
     const ch = CHAPTERS.find(c => c.id === arg);
     if (ch && lvl === undefined) return chooser(ch);
-    const d = +lvl, qs = ch ? QUESTIONS.filter(q => q.ch === ch.id && (!d || q.d === d)) : [];
+    const d = +lvl, qs = ch ? QUESTIONS.filter(q => q.ch === ch.id && (!d || q.d === d) && !excluded(q, myStream())) : [];
     // الترتيب: من السهل إلى الصعب، مع خلط داخل كل مستوى
     if (qs.length) return runQuiz({ questions: [1, 2, 3].flatMap(k => shuffle(qs.filter(q => q.d === k))), exam: false, title: ch.name + (d ? " — " + DIFF[d] : "") });
   }

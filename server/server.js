@@ -21,10 +21,11 @@ const ADMINS = new Set(String(process.env.ADMIN_LOGINS || "").split(",").map(x =
 // ---------- الأسئلة المدمجة (data.js و solutions.js) تُنقل إلى قاعدة البيانات عند أول تشغيل ----------
 const ctx = vm.createContext({});
 vm.runInContext(fs.readFileSync(path.join(ROOT, "data.js"), "utf8") + fs.readFileSync(path.join(ROOT, "solutions.js"), "utf8") +
-  ";this.Q = QUESTIONS; this.C = CHAPTERS; this.S = SOLUTIONS; this.ST = STREAMS;", ctx);
+  ";this.Q = QUESTIONS; this.C = CHAPTERS; this.S = SOLUTIONS; this.ST = STREAMS; this.QT = questionTags;", ctx);
 const CHAPTER_IDS = new Set(ctx.C.map(c => c.id));
 const STREAM_IDS = new Set(ctx.ST.map(x => x.id));
 const STREAM_CH = new Map(ctx.ST.map(x => [x.id, x.ch]));
+const STREAM_EXCL = new Map(ctx.ST.map(x => [x.id, x.exclude || []]));
 const validStream = v => { if (!STREAM_IDS.has(v)) throw new HttpError(400, "اختر الشعبة"); return v; };
 // مواضيع البكالوريا (ملف ثابت). BAC_FILE يسمح باستعمال ملف آخر في الاختبارات
 const BAC_FILE = process.env.BAC_FILE || path.join(ROOT, "bac.js");
@@ -374,10 +375,12 @@ async function api(req, res, url) {
     const due = b.due === null || b.due === undefined || b.due === "" ? null : Number(b.due);
     if (due !== null && (!Number.isFinite(due) || due < Date.now() - 864e5)) throw new HttpError(400, "تاريخ التسليم غير صالح");
     // الأسئلة المقبولة + أسئلة الأستاذ نفسه التي لم تُراجع بعد
-    let pool = q(`SELECT id, d, ch FROM questions WHERE (status = 'approved' OR (author_id = ? AND status = 'pending'))
+    let pool = q(`SELECT id, d, ch, q, o, e, s FROM questions WHERE (status = 'approved' OR (author_id = ? AND status = 'pending'))
                     AND (? = '' OR ch = ?) AND (? = 0 OR d = ?)`).all(user.id, chapter, chapter, difficulty, difficulty);
     const streamCh = STREAM_CH.get(c.stream) || [];
     pool = chapter ? pool : pool.filter(x => streamCh.includes(x.ch)); // «كل الوحدات» = وحدات شعبة القسم
+    const excl = STREAM_EXCL.get(c.stream) || []; // أنواع الدوال غير المقررة في الشعبة
+    pool = pool.filter(x => !ctx.QT({ q: x.q, o: JSON.parse(x.o), e: x.e }, JSON.parse(x.s)).some(t => excl.includes(t)));
     if (!pool.length) throw new HttpError(400, "لا توجد أسئلة بهذه الشروط");
     const qids = pool.map(x => [crypto.randomInt(1e9), x]).sort((a, z) => a[0] - z[0]).slice(0, count)
       .map(p => p[1]).sort((a, z) => a.d - z.d).map(x => x.id); // من الأسهل إلى الأصعب

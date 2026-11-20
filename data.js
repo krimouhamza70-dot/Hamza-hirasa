@@ -15,13 +15,14 @@ const CHAPTERS = [
 ];
 
 // الشعب ووحدات الرياضيات المقررة في كل شعبة (السنة الثالثة ثانوي)
+// exclude: أنواع الدوال غير المقررة في الشعبة، فتُستبعد الأسئلة التي فيها (trig مثلثية، exp أسية، log لوغاريتمية)
 // ⚠️ مسودة: يجب أن يراجعها أستاذ الرياضيات ويصححها حسب المنهاج الرسمي
 const STREAMS = [
   { id: "se", name: "علوم تجريبية", ch: ["lim", "der", "exp", "log", "seq", "cpx", "prb", "int", "space"] },
   { id: "m", name: "رياضيات", ch: ["lim", "der", "exp", "log", "seq", "cpx", "prb", "int", "space", "arith"] },
   { id: "tm", name: "تقني رياضي", ch: ["lim", "der", "exp", "log", "seq", "cpx", "prb", "int", "space", "arith"] },
   { id: "ge", name: "تسيير واقتصاد", ch: ["lim", "der", "exp", "log", "seq", "prb", "int", "stat"] },
-  { id: "lp", name: "آداب وفلسفة", ch: ["lim", "der", "seq", "arith", "stat"] },
+  { id: "lp", name: "آداب وفلسفة", ch: ["lim", "der", "seq", "arith", "stat"], exclude: ["trig", "exp"] },
   { id: "lg", name: "لغات أجنبية", ch: ["lim", "der", "seq", "arith", "stat"] }
 ];
 const DIFF = { 1: "سهل", 2: "متوسط", 3: "صعب" };
@@ -165,3 +166,13 @@ const QUESTIONS = [
   { id: 61, ch: "int", d: 3, q: "مساحة الحيز المحصور بين المنحنيين y = x و y = x² على [0, 1] هي:", o: ["1/6", "1/3", "1/2", "1/12"], a: 0,
     e: "على [0,1] لدينا x ≥ x² ← ∫₀¹ (x − x²) dx = 1/2 − 1/3 = 1/6 وحدة مساحة." }
 ];
+
+// أنواع الدوال في السؤال، تُكتشف من نصه وخياراته وحله: trig مثلثية، exp أسية، log لوغاريتمية
+function questionTags(q, steps = []) {
+  const t = [q.q, ...q.o, q.e, ...steps].join(" ");
+  const tags = [];
+  if (/\b(sin|cos|tan)\b|مثلثي/.test(t)) tags.push("trig");
+  if (/e\^|eˣ|e[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]|\bexp\b|أسي/.test(t)) tags.push("exp");
+  if (/\bln\b|لوغاريتم/.test(t)) tags.push("log");
+  return tags;
+}

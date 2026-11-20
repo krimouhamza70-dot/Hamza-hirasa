@@ -274,3 +274,21 @@ test("الشعب", async () => {
   assert.equal((await p("children")).body.children[0].stream, "ge");
   assert.equal((await p(`children/${u.id}/attempts`)).body.stream, "ge");
 });
+
+test("آداب وفلسفة: لا دوال مثلثية ولا أسية في الواجبات", async () => {
+  const t = client();
+  await t("register", { name: "أستاذ آداب", login: "lp@mail.dz", password: "secret1", role: "teacher" });
+  const lp = (await t("classes", { name: "3 آداب", stream: "lp" })).body.class;
+  const se = (await t("classes", { name: "3 علوم", stream: "se" })).body.class;
+  const lim = (await t(`classes/${lp.id}/assignments`, { title: "نهايات", chapter: "lim", difficulty: 0, count: 20 })).body.assignment.qids;
+  assert.ok(!lim.includes(2) && !lim.includes(27), "أسئلة النهايات المثلثية مستبعدة");
+  // السؤال 1 عدّله المدير في اختبار سابق فصار عن e^(ln 3): يُكتشف كدالة أسية ويُستبعد أيضاً
+  assert.ok(!lim.includes(1), "تعديل سؤال يعيد اكتشاف نوع دواله");
+  assert.equal(lim.length, 4);
+  const der = (await t(`classes/${lp.id}/assignments`, { title: "اشتقاق", chapter: "der", difficulty: 0, count: 20 })).body.assignment.qids;
+  assert.ok(!der.includes(30), "مشتقة cos مستبعدة");
+  const all = (await t(`classes/${lp.id}/assignments`, { title: "الكل", chapter: "", difficulty: 0, count: 20 })).body.assignment.qids;
+  assert.ok(![2, 27, 30].some(i => all.includes(i)));
+  const seLim = (await t(`classes/${se.id}/assignments`, { title: "نهايات", chapter: "lim", difficulty: 0, count: 20 })).body.assignment.qids;
+  assert.equal(seLim.length, 7, "شعبة العلوم تبقى كاملة");
+});
