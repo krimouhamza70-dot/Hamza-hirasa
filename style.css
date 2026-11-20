@@ -1,0 +1,31 @@
+:root{--bg:#f5f7fb;--card:#fff;--ink:#1c2433;--mute:#6b7690;--pri:#2f6fed;--ok:#1f9d63;--bad:#d64545;--warn:#e69a1c;--line:#e3e8f2}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1420;--card:#171e2e;--ink:#e8edf8;--mute:#93a0bd;--line:#26304a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Segoe UI",Tahoma,"Noto Naskh Arabic",sans-serif;line-height:1.7}
+header{background:var(--pri);color:#fff;padding:14px 16px}
+header .in{max-width:900px;margin:auto;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+header h1{margin:0;font-size:20px}
+nav a{color:#fff;text-decoration:none;margin-inline-start:14px;opacity:.9;font-size:15px}
+nav a:hover{opacity:1;text-decoration:underline}
+main{max-width:900px;margin:auto;padding:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+h2{margin:0 0 10px;font-size:18px}
+.big{font-size:38px;font-weight:700;color:var(--pri)}
+.mute{color:var(--mute);font-size:14px}
+button,.btn{background:var(--pri);color:#fff;border:0;border-radius:8px;padding:10px 16px;font-size:15px;cursor:pointer;text-decoration:none;display:inline-block;font-family:inherit}
+button.sec{background:transparent;color:var(--pri);border:1px solid var(--pri)}
+button:disabled{opacity:.5;cursor:default}
+.opt{display:block;width:100%;text-align:start;background:var(--card);color:var(--ink);border:2px solid var(--line);margin:8px 0;direction:ltr;unicode-bidi:plaintext}
+.opt:hover:not(:disabled){border-color:var(--pri)}
+.opt.sel{border-color:var(--pri)}
+.opt.ok{border-color:var(--ok);background:rgba(31,157,99,.12)}
+.opt.bad{border-color:var(--bad);background:rgba(214,69,69,.12)}
+.q{font-size:18px;direction:rtl;unicode-bidi:plaintext}
+.bar{height:10px;background:var(--line);border-radius:6px;overflow:hidden}
+.bar>i{display:block;height:100%;background:var(--pri)}
+.row{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.tag{font-size:12px;padding:2px 8px;border-radius:99px;background:var(--line)}
+.expl{margin-top:10px;padding:10px;border-radius:8px;background:rgba(47,111,237,.1)}
+.timer{font-weight:700;color:var(--warn)}
+@media print{header,nav,.noprint{display:none}body{background:#fff;color:#000}.card{break-inside:avoid}}
