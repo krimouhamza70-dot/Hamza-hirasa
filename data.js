@@ -8,7 +8,21 @@ const CHAPTERS = [
   { id: "seq", name: "المتتاليات العددية" },
   { id: "cpx", name: "الأعداد المركبة" },
   { id: "prb", name: "الاحتمالات" },
-  { id: "int", name: "الحساب التكاملي" }
+  { id: "int", name: "الحساب التكاملي" },
+  { id: "space", name: "الهندسة في الفضاء" },
+  { id: "arith", name: "الحساب (القسمة والموافقات)" },
+  { id: "stat", name: "الإحصاء" }
+];
+
+// الشعب ووحدات الرياضيات المقررة في كل شعبة (السنة الثالثة ثانوي)
+// ⚠️ مسودة: يجب أن يراجعها أستاذ الرياضيات ويصححها حسب المنهاج الرسمي
+const STREAMS = [
+  { id: "se", name: "علوم تجريبية", ch: ["lim", "der", "exp", "log", "seq", "cpx", "prb", "int", "space"] },
+  { id: "m", name: "رياضيات", ch: ["lim", "der", "exp", "log", "seq", "cpx", "prb", "int", "space", "arith"] },
+  { id: "tm", name: "تقني رياضي", ch: ["lim", "der", "exp", "log", "seq", "cpx", "prb", "int", "space", "arith"] },
+  { id: "ge", name: "تسيير واقتصاد", ch: ["lim", "der", "exp", "log", "seq", "prb", "int", "stat"] },
+  { id: "lp", name: "آداب وفلسفة", ch: ["lim", "der", "seq", "arith", "stat"] },
+  { id: "lg", name: "لغات أجنبية", ch: ["lim", "der", "seq", "arith", "stat"] }
 ];
 const DIFF = { 1: "سهل", 2: "متوسط", 3: "صعب" };
 

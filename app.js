@@ -15,6 +15,21 @@ function bacSet(eid, part, score) {
   if (bacProg) { (bacProg[eid] ||= {})[part] = score; api("bac/progress", { eid, part, score }).catch(() => {}); }
   else { const p = bacLocal(); (p[eid] ||= {})[part] = score; try { localStorage.setItem(BKEY, JSON.stringify(p)); } catch {} }
 }
+// ---------- الشعب ----------
+const SKEY = "bacmath.stream";
+const streamOf = id => STREAMS.find(x => x.id === id) || STREAMS[0];
+function myStream() {
+  if (user && user.role === "student" && user.stream) return user.stream;
+  try { return localStorage.getItem(SKEY) || "se"; } catch { return "se"; }
+}
+const chaptersOf = sid => streamOf(sid).ch.map(id => CHAPTERS.find(c => c.id === id)).filter(Boolean);
+const hasQ = c => QUESTIONS.some(q => q.ch === c.id);
+const statChs = sid => chaptersOf(sid).filter(hasQ); // الوحدات التي فيها أسئلة تدخل في حساب العلامة
+async function setStream(id) {
+  if (user && user.role === "student") user = (await api("me/stream", { stream: id })).user;
+  else try { localStorage.setItem(SKEY, id); } catch {}
+}
+const streamSelect = (id, sel) => `<select id="${id}">${STREAMS.map(x => `<option value="${x.id}"${x.id === sel ? " selected" : ""}>${x.name}</option>`).join("")}</select>`;
 const chName = id => (CHAPTERS.find(c => c.id === id) || {}).name || "";
 const localHistory = () => { try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch { return []; } };
 const load = () => cache ? cache.slice() : localHistory();
@@ -93,7 +108,7 @@ const dateStr = t => new Date(t).toLocaleDateString("ar-DZ");
 const loading = () => { $app.innerHTML = `<div class="card"><p class="mute">جاري التحميل…</p></div>`; };
 const failed = (e, back = "#account") => { $app.innerHTML = `<div class="card"><p class="msg">${esc(e.message)}</p><a href="${back}">العودة</a></div>`; };
 // إحصائيات الوحدات من مجاميع الخادم {lim: [محاولات، صحيحة], ...}
-const statsOf = ch => CHAPTERS.map(c => { const [a, k] = ch[c.id] || [0, 0]; return { ...c, attempts: a, correct: k, mastery: (k + 1) / (a + 2) }; });
+const statsOf = (ch, chs = CHAPTERS) => chs.map(c => { const [a, k] = ch[c.id] || [0, 0]; return { ...c, attempts: a, correct: k, mastery: (k + 1) / (a + 2) }; });
 
 // ---------- الحل المفصل ----------
 // k = رقم الخيار الذي اختاره التلميذ (أو undefined إن لم يُجب)
@@ -113,12 +128,14 @@ function correction(q, k, sol = SOLUTIONS[q.id]) {
 
 // ---------- الصفحة الرئيسية ----------
 function home() {
-  const st = chapterStats(load(), CHAPTERS, ALLQ), p = predict(st);
+  const sid = myStream(), st = chapterStats(load(), statChs(sid), ALLQ), p = predict(st);
   const weak = st.filter(c => c.attempts).sort((a, b) => a.mastery - b.mastery)[0];
   $app.innerHTML = `
   ${user && user.role === "parent" ? `<div class="card row"><span>أنت مسجّل كولي أمر. نتائج أبنائك في صفحة حسابك.</span><a class="btn" href="#account">متابعة أبنائي</a></div>` : ""}
   ${user && user.role === "teacher" ? `<div class="card row"><span>أنت مسجّل كأستاذ. نتائج تلاميذك وواجباتهم في صفحة أقسامك.</span><a class="btn" href="#account">أقسامي</a></div>` : ""}
   ${user && user.role === "student" ? `<div id="hwbox"></div>` : ""}
+  <div class="card row"><label class="inline">شعبتي ${streamSelect("myStream", sid)}</label>
+    <span class="mute">${p.attempts ? "" : "اختر شعبتك لترى وحداتها فقط."}</span></div>
   ${online && !user ? `<div class="card row"><span>أنشئ حساباً لتُحفظ نتائجك ويتابعها وليّك من هاتفه.</span><a class="btn sec" href="#account">إنشاء حساب</a></div>` : ""}
   <div class="grid">
     <div class="card"><div class="mute">العلامة المتوقعة في الباك</div>
@@ -129,12 +146,15 @@ function home() {
       ${weak ? `<div class="mute">إتقان ${pct(weak.mastery)}%</div>` : ""}</div>
   </div>
   <div class="card"><h2>الوحدات</h2>
-    ${st.map(c => `<div style="margin:12px 0"><div class="row"><b>${c.name}</b>
+    ${chaptersOf(sid).map(c0 => { const c = st.find(x => x.id === c0.id);
+      return c ? `<div style="margin:12px 0"><div class="row"><b>${c.name}</b>
       <span class="mute">${c.attempts ? `${c.correct}/${c.attempts} · إتقان ${pct(c.mastery)}%` : "لم تبدأ بعد"}</span></div>
       <div class="bar"><i style="width:${c.attempts ? pct(c.mastery) : 0}%"></i></div>
-      <a class="btn sec" style="margin-top:6px;padding:4px 12px" href="#practice-${c.id}">تدرّب</a></div>`).join("")}
+      <a class="btn sec" style="margin-top:6px;padding:4px 12px" href="#practice-${c.id}">تدرّب</a></div>`
+      : `<div style="margin:12px 0" class="row"><b>${c0.name}</b><span class="mute">لا توجد أسئلة في هذه الوحدة بعد</span></div>`; }).join("")}
   </div>
   <div class="card row"><span>اختبار مدته ٢٠ دقيقة من ١٠ أسئلة تغطي كل الوحدات</span><a class="btn" href="#exam">ابدأ الاختبار</a></div>`;
+  document.getElementById("myStream").onchange = async e => { try { await setStream(e.target.value); } catch {} home(); };
   if (user && user.role === "student") loadHomework();
 }
 
@@ -212,12 +232,12 @@ function runQuiz({ questions, exam, title, hw = null }) {
 
 // ---------- تقرير الولي ----------
 // h = سجل التلميذ، who = اسمه (عند عرض الولي لتقرير ابنه)
-function report(h = load(), who = null, back = "#account", backLabel = "العودة إلى قائمة أبنائي") {
-  const st = chapterStats(h, CHAPTERS, ALLQ), p = predict(st);
+function report(h = load(), who = null, back = "#account", backLabel = "العودة إلى قائمة أبنائي", sid = myStream()) {
+  const st = chapterStats(h, statChs(sid), ALLQ), p = predict(st);
   const last = h.length ? new Date(Math.max(...h.map(r => r.ts))).toLocaleDateString("ar-DZ") : "—";
   $app.innerHTML = `<div class="card"><h2>تقرير متابعة ${who ? esc(who) : "التلميذ"}</h2>
     ${who ? `<p><a href="${back}">← ${backLabel}</a></p>` : ""}
-    <p class="mute">آخر نشاط: ${last}</p>
+    <p class="mute">الشعبة: ${streamOf(sid).name} · آخر نشاط: ${last}</p>
     <p>عدد الأسئلة المحلولة: <b>${p.attempts}</b> — العلامة المتوقعة: <b>${p.attempts ? p.score.toFixed(1) + " / 20" : "—"}</b>
       ${p.attempts && p.reliable ? `(${p.low.toFixed(1)} – ${p.high.toFixed(1)})` : ""}</p>
     <div class="tablewrap"><table style="width:100%;border-collapse:collapse">
@@ -268,18 +288,20 @@ async function account() {
           <label><input type="radio" name="role" id="rStudent" value="student" checked> تلميذ</label>
           <label><input type="radio" name="role" id="rParent" value="parent"> ولي أمر</label>
           <label><input type="radio" name="role" id="rTeacher" value="teacher"> أستاذ</label></fieldset>
+        <label id="rStreamL">الشعبة${streamSelect("rStream", myStream())}</label>
         <label>الاسم الكامل<input id="rName" required minlength="2" maxlength="60" autocomplete="name"></label>
         <label>رقم الهاتف أو البريد الإلكتروني<input id="rLogin" required autocomplete="username"></label>
         <label>كلمة السر (6 أحرف على الأقل)<input id="rPass" type="password" required minlength="6" autocomplete="new-password"></label>
         <button type="submit">إنشاء الحساب</button></form>
     </div>`;
+    document.querySelectorAll("input[name=role]").forEach(r => r.onchange = () => { document.getElementById("rStreamL").hidden = !document.getElementById("rStudent").checked; });
     onSubmit(document.getElementById("fLogin"), async () => {
       const r = await api("login", { login: val("lLogin"), password: val("lPass") });
       await setUser(r.user); account();
     });
     onSubmit(document.getElementById("fReg"), async () => {
       const role = ["rParent", "rTeacher"].map(i => document.getElementById(i)).find(x => x.checked)?.value || "student";
-      const r = await api("register", { name: val("rName"), login: val("rLogin"), password: val("rPass"), role });
+      const r = await api("register", { name: val("rName"), login: val("rLogin"), password: val("rPass"), role, ...(role === "student" ? { stream: val("rStream") } : {}) });
       await setUser(r.user); account();
     });
     return;
@@ -288,7 +310,7 @@ async function account() {
   if (user.role === "student") {
     loading();
     let mine = { classes: [] }; try { mine = await api("my/classes"); } catch {}
-    $app.innerHTML = `<div class="card"><h2>مرحباً ${esc(user.name)}</h2><p class="mute">حساب تلميذ</p>
+    $app.innerHTML = `<div class="card"><h2>مرحباً ${esc(user.name)}</h2><p class="mute">حساب تلميذ · شعبة ${streamOf(user.stream).name}</p>
       <p>رمز الربط الخاص بك:</p><p class="code">${esc(user.linkCode)}</p>
       <p class="mute">أعطِ هذا الرمز لولي أمرك ليربط حسابه بحسابك ويتابع نتائجك من هاتفه.</p>
       <p>نتائجك محفوظة في حسابك: <b>${nOf(cache.length, ANS)}</b>، وتجدها من أي جهاز تسجّل منه الدخول.</p>
@@ -307,7 +329,7 @@ async function account() {
   try { children = (await api("children")).children; } catch (e) { $app.innerHTML = `<div class="card msg">${esc(e.message)}</div>`; return; }
   $app.innerHTML = `<div class="card"><h2>مرحباً ${esc(user.name)}</h2><p class="mute">حساب ولي أمر</p></div>
     <div class="card"><h2>أبنائي</h2>
-      ${children.length ? children.map(c => `<div class="child row"><div><b>${esc(c.name)}</b><br>
+      ${children.length ? children.map(c => `<div class="child row"><div><b>${esc(c.name)}</b> <span class="mute">· ${streamOf(c.stream).name}</span><br>
           <span class="mute">${c.attempts ? `${nOf(c.attempts, ANS)} · ${pct(c.correct / c.attempts)}% صحيحة · آخر نشاط ${new Date(c.last).toLocaleDateString("ar-DZ")}` : "لم يبدأ التدريب بعد"}</span></div>
           <a class="btn sec" href="#child-${c.id}">التقرير المفصل</a></div>`).join("")
         : `<p class="mute">لم تربط أي تلميذ بعد. اطلب من ابنك رمز الربط الظاهر في صفحة «حسابي» عنده.</p>`}</div>
@@ -322,7 +344,7 @@ async function account() {
 async function childReport(id) {
   if (!user || user.role !== "parent") return account();
   loading();
-  try { const r = await api(`children/${id}/attempts`); report(r.history, r.name); } catch (e) { failed(e); }
+  try { const r = await api(`children/${id}/attempts`); report(r.history, r.name, "#account", "العودة إلى قائمة أبنائي", r.stream); } catch (e) { failed(e); }
 }
 
 // ---------- الأستاذ ----------
@@ -332,7 +354,7 @@ async function teacherHome() {
   $app.innerHTML = `<div class="card"><h2>مرحباً ${esc(user.name)}</h2><p class="mute">حساب أستاذ</p></div>
     <div class="card"><h2>أقسامي</h2>
       ${classes.length ? classes.map(c => `<div class="child row"><div><b>${esc(c.name)}</b><br>
-          <span class="mute">${nOf(c.students, STUD)} · الرمز <span dir="ltr">${esc(c.code)}</span></span></div>
+          <span class="mute">${streamOf(c.stream).name} · ${nOf(c.students, STUD)} · الرمز <span dir="ltr">${esc(c.code)}</span></span></div>
           <a class="btn sec" href="#class-${c.id}">فتح القسم</a></div>`).join("")
         : `<p class="mute">لم تُنشئ أي قسم بعد. أنشئ قسماً ثم أعطِ رمزه لتلاميذك.</p>`}</div>
     <div class="card row"><div><h2>بنك أسئلتي</h2><p class="mute">أضف أسئلتك وحلولها. تُستعمل فوراً في واجبات أقسامك، وتظهر لكل التلاميذ بعد المراجعة.</p></div>
@@ -340,9 +362,10 @@ async function teacherHome() {
     ${user.admin ? `<div class="card row"><span>أنت مدير المنصة.</span><a class="btn" href="#review">مراجعة أسئلة الأساتذة</a></div>` : ""}
     <form class="card" id="fClass"><h2>إنشاء قسم جديد</h2><p class="msg" id="msg" role="alert"></p>
       <label>اسم القسم<input id="cName" required maxlength="60" placeholder="مثال: 3 علوم تجريبية 2"></label>
+      <label>الشعبة${streamSelect("cStream", "se")}</label>
       <button type="submit">إنشاء القسم</button></form>
     <p><button class="sec" id="out">تسجيل الخروج</button></p>`;
-  onSubmit(document.getElementById("fClass"), async () => { const r = await api("classes", { name: val("cName") }); location.hash = "#class-" + r.class.id; });
+  onSubmit(document.getElementById("fClass"), async () => { const r = await api("classes", { name: val("cName"), stream: val("cStream") }); location.hash = "#class-" + r.class.id; });
   logoutButton();
 }
 const lvl = r => r === null ? "" : r < .5 ? "lv-bad" : r < .75 ? "lv-mid" : "lv-good";
@@ -366,14 +389,15 @@ async function classPage(id) {
   loading();
   let d; try { d = await api(`classes/${id}`); } catch (e) { return failed(e); }
   const { students, assignments } = d, cls = d.class, active = students.filter(s => s.attempts);
-  const preds = active.map(s => predict(statsOf(s.ch)).score);
+  const chs = chaptersOf(cls.stream), pchs = chs.filter(hasQ);
+  const preds = active.map(s => predict(statsOf(s.ch, pchs)).score);
   const avgPred = preds.length ? preds.reduce((a, b) => a + b, 0) / preds.length : null;
   const tot = {};
   for (const s of students) for (const [ch, [a, k]] of Object.entries(s.ch)) { const t = tot[ch] || (tot[ch] = [0, 0]); t[0] += a; t[1] += k; }
-  const weak = CHAPTERS.filter(c => tot[c.id]).sort((a, b) => rate(tot[a.id]) - rate(tot[b.id]))[0];
+  const weak = chs.filter(c => tot[c.id]).sort((a, b) => rate(tot[a.id]) - rate(tot[b.id]))[0];
   const cell = c => { const r = rate(c); return `<td class="${lvl(r)}"${c ? ` title="${c[1]} صحيحة من ${c[0]}"` : ""}>${r === null ? "—" : pct(r) + "%"}</td>`; };
   $app.innerHTML = `<p><a href="#account">← أقسامي</a></p>
-  <div class="card"><h2>${esc(cls.name)}</h2><p>رمز القسم:</p><p class="code">${esc(cls.code)}</p>
+  <div class="card"><h2>${esc(cls.name)}</h2><p class="mute">شعبة ${streamOf(cls.stream).name}</p><p>رمز القسم:</p><p class="code">${esc(cls.code)}</p>
     <p class="mute">أعطِ هذا الرمز لتلاميذك: ينشئ كل تلميذ حساباً، ثم يُدخل الرمز في صفحة «حسابي».</p></div>
   <div class="grid">
     <div class="card"><div class="mute">التلاميذ</div><div class="big">${students.length}</div><div class="mute">${active.length} بدأوا التدريب</div></div>
@@ -384,16 +408,16 @@ async function classPage(id) {
   <div class="card"><h2>نتائج التلاميذ حسب الوحدة</h2>
     ${students.length ? `<p class="mute">النسبة = الإجابات الصحيحة من مجموع إجابات التلميذ في الوحدة. اضغط على اسم التلميذ لرؤية تقريره المفصل. العلامة المعلّمة بـ * تقدير أولي لأن التلميذ أجاب عن أقل من 15 سؤالاً.</p>
       <div class="legend"><span class="lv-bad">أقل من 50%</span><span class="lv-mid">من 50% إلى 75%</span><span class="lv-good">75% فأكثر</span></div>
-      <div class="tablewrap"><table class="heat"><thead><tr><th>التلميذ</th><th>إجابات</th><th>العلامة المتوقعة</th>${CHAPTERS.map(c => `<th>${c.name}</th>`).join("")}<th>آخر نشاط</th></tr></thead>
+      <div class="tablewrap"><table class="heat"><thead><tr><th>التلميذ</th><th>إجابات</th><th>العلامة المتوقعة</th>${chs.map(c => `<th>${c.name}</th>`).join("")}<th>آخر نشاط</th></tr></thead>
       <tbody>${students.map(s => `<tr><th><a href="#student-${cls.id}-${s.id}">${esc(s.name)}</a></th><td>${s.attempts}</td>
-        <td>${!s.attempts ? "—" : s.attempts < 15 ? `<span class="mute" title="تقدير أولي: أقل من 15 إجابة">${predict(statsOf(s.ch)).score.toFixed(1)}*</span>` : predict(statsOf(s.ch)).score.toFixed(1)}</td>${CHAPTERS.map(c => cell(s.ch[c.id])).join("")}<td>${s.last ? dateStr(s.last) : "—"}</td></tr>`).join("")}</tbody>
-      <tfoot><tr><th>القسم</th><td>${students.reduce((a, s) => a + s.attempts, 0)}</td><td>${avgPred === null ? "—" : avgPred.toFixed(1)}</td>${CHAPTERS.map(c => cell(tot[c.id])).join("")}<td></td></tr></tfoot></table></div>`
+        <td>${!s.attempts ? "—" : s.attempts < 15 ? `<span class="mute" title="تقدير أولي: أقل من 15 إجابة">${predict(statsOf(s.ch, pchs)).score.toFixed(1)}*</span>` : predict(statsOf(s.ch, pchs)).score.toFixed(1)}</td>${chs.map(c => cell(s.ch[c.id])).join("")}<td>${s.last ? dateStr(s.last) : "—"}</td></tr>`).join("")}</tbody>
+      <tfoot><tr><th>القسم</th><td>${students.reduce((a, s) => a + s.attempts, 0)}</td><td>${avgPred === null ? "—" : avgPred.toFixed(1)}</td>${chs.map(c => cell(tot[c.id])).join("")}<td></td></tr></tfoot></table></div>`
       : `<p class="mute">لم ينضم أي تلميذ بعد.</p>`}</div>
   <div class="card"><h2>الواجبات</h2>${assignments.length ? assignments.map(a => hwTeacherRow(a, students)).join("") : `<p class="mute">لم تُرسل أي واجب بعد.</p>`}</div>
   <form class="card" id="fHw"><h2>إرسال واجب جديد</h2><p class="msg" id="msg" role="alert"></p>
     <label>العنوان<input id="hTitle" required maxlength="80" placeholder="مثال: مراجعة الدالة الأسية"></label>
     <div class="grid2">
-      <label>الوحدة<select id="hCh"><option value="">كل الوحدات</option>${CHAPTERS.map(c => `<option value="${c.id}">${c.name}</option>`).join("")}</select></label>
+      <label>الوحدة<select id="hCh"><option value="">كل وحدات الشعبة</option>${chs.map(c => `<option value="${c.id}">${c.name}</option>`).join("")}</select></label>
       <label>الصعوبة<select id="hD"><option value="0">كل المستويات</option>${[1, 2, 3].map(d => `<option value="${d}">${DIFF[d]}</option>`).join("")}</select></label>
       <label>عدد الأسئلة<input id="hN" type="number" min="1" max="20" value="5" required></label>
       <label>آخر أجل للتسليم (اختياري)<input id="hDue" type="date"></label>
@@ -402,7 +426,7 @@ async function classPage(id) {
     <button type="submit">إرسال الواجب إلى القسم</button></form>`;
   const avail = () => {
     const ch = val("hCh"), d = +val("hD");
-    const n = ALLQ.filter(q => (isPublic(q) || (q.mine && q.status === "pending")) && (!ch || q.ch === ch) && (!d || q.d === d)).length;
+    const n = ALLQ.filter(q => (isPublic(q) || (q.mine && q.status === "pending")) && (ch ? q.ch === ch : cls && chs.some(c => c.id === q.ch)) && (!d || q.d === d)).length;
     document.getElementById("hAvail").textContent = n ? `متوفر ${nOf(n, QS)} بهذه الشروط، وتُختار الأسئلة عشوائياً منها.` : "لا توجد أسئلة بهذه الشروط، غيّر الوحدة أو الصعوبة.";
   };
   ["hCh", "hD"].forEach(i => document.getElementById(i).onchange = avail); avail();
@@ -416,7 +440,7 @@ async function classPage(id) {
 async function teacherStudent(cid, sid) {
   if (!user || user.role !== "teacher") return account();
   loading();
-  try { const r = await api(`classes/${cid}/students/${sid}/attempts`); report(r.history, r.name, `#class-${cid}`, "العودة إلى القسم"); }
+  try { const r = await api(`classes/${cid}/students/${sid}/attempts`); report(r.history, r.name, `#class-${cid}`, "العودة إلى القسم", r.stream); }
   catch (e) { failed(e, `#class-${cid}`); }
 }
 
@@ -573,25 +597,28 @@ function bacScore(x, prog = bacGet()[x.id] || {}) {
   return { done, got };
 }
 const fmtPts = n => Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0$/, "");
-let bacFilter = { year: "", ch: "" };
+let bacFilter = { stream: null, year: "", ch: "" };
 function bacList() {
-  const years = [...new Set(BAC.map(x => x.year))].sort((a, b) => b - a);
-  const shown = BAC.filter(x => (!bacFilter.year || x.year === +bacFilter.year) && (!bacFilter.ch || x.ch.includes(bacFilter.ch)))
+  const sid = bacFilter.stream || myStream(), sname = streamOf(sid).name, list = BAC.filter(x => x.stream === sid);
+  const years = [...new Set(list.map(x => x.year))].sort((a, b) => b - a);
+  const shown = list.filter(x => (!bacFilter.year || x.year === +bacFilter.year) && (!bacFilter.ch || x.ch.includes(bacFilter.ch)))
     .sort((a, b) => b.year - a.year || a.subject - b.subject || a.num - b.num);
   const prog = bacGet();
-  const solved = BAC.filter(x => bacScore(x, prog[x.id] || {}).done === x.parts.length).length;
-  $app.innerHTML = `<div class="card"><h2>مواضيع البكالوريا · ${BAC_STREAM}</h2>
-    ${BAC.length ? `<p class="mute">${nOf(BAC.length, EXS)} من المواضيع الرسمية، مع الحل المفصل لكل جزء. حل التمرين على ورقتك، ثم قارن حلك وقيّم نفسك. أنجزت ${solved} منها.</p>
+  const solved = list.filter(x => bacScore(x, prog[x.id] || {}).done === x.parts.length).length;
+  $app.innerHTML = `<div class="card"><h2>مواضيع البكالوريا</h2>
+    <div class="grid2"><label>الشعبة${streamSelect("fs", sid)}</label></div>
+    ${list.length ? `<p class="mute">${nOf(list.length, EXS)} من المواضيع الرسمية لشعبة ${sname}، مع الحل المفصل لكل جزء. حل التمرين على ورقتك، ثم قارن حلك وقيّم نفسك. أنجزت ${solved} منها.</p>
       <div class="grid2">
         <label>السنة<select id="fy"><option value="">كل السنوات</option>${years.map(y => `<option${String(y) === bacFilter.year ? " selected" : ""}>${y}</option>`).join("")}</select></label>
-        <label>الوحدة<select id="fc"><option value="">كل الوحدات</option>${CHAPTERS.filter(c => BAC.some(x => x.ch.includes(c.id))).map(c => `<option value="${c.id}"${c.id === bacFilter.ch ? " selected" : ""}>${c.name}</option>`).join("")}</select></label>
-      </div>` : `<p class="mute">لم تُضف مواضيع البكالوريا بعد. نعمل على إضافة مواضيع شعبة ${BAC_STREAM} من 2008 إلى 2026 مع حلولها المفصلة.</p>`}</div>
+        <label>الوحدة<select id="fc"><option value="">كل الوحدات</option>${CHAPTERS.filter(c => list.some(x => x.ch.includes(c.id))).map(c => `<option value="${c.id}"${c.id === bacFilter.ch ? " selected" : ""}>${c.name}</option>`).join("")}</select></label>
+      </div>` : `<p class="mute">لم تُضف مواضيع شعبة ${sname} بعد. نعمل على إضافة المواضيع الرسمية من 2008 إلى 2026 مع حلولها المفصلة.</p>`}</div>
     ${shown.length ? `<div class="card">${shown.map(x => { const sc = bacScore(x, prog[x.id] || {}), all = sc.done === x.parts.length;
       return `<div class="hw row"><div><b>${bacSource(x)}</b><br>
           <span class="mute">${x.ch.map(chName).join("، ")} · ${fmtPts(x.points)} نقاط · ${nOf(x.parts.length, PARTS)}</span><br>
           <span class="${all ? "okt" : "mute"}">${!sc.done ? "لم تبدأ بعد" : all ? `✅ أنجزته · علامتك التقديرية ${fmtPts(sc.got)} / ${fmtPts(x.points)}` : `قيّمت ${sc.done} من ${x.parts.length} أجزاء`}</span></div>
         <a class="btn ${all ? "sec" : ""}" href="#bacx-${x.id}">${all ? "مراجعة" : sc.done ? "أكمل" : "ابدأ"}</a></div>`; }).join("")}</div>`
-      : BAC.length ? `<div class="card"><p class="mute">لا توجد تمارين بهذه الشروط.</p></div>` : ""}`;
+      : list.length ? `<div class="card"><p class="mute">لا توجد تمارين بهذه الشروط.</p></div>` : ""}`;
+  document.getElementById("fs").onchange = e => { bacFilter = { stream: e.target.value, year: "", ch: "" }; bacList(); };
   for (const [id, key] of [["fy", "year"], ["fc", "ch"]]) { const el = document.getElementById(id); if (el) el.onchange = () => { bacFilter[key] = el.value; bacList(); }; }
 }
 function bacExercise(id) {
@@ -601,7 +628,7 @@ function bacExercise(id) {
   const RATE = [[1, "✅ حللته صحيحاً"], [0.5, "½ صحيح جزئياً"], [0, "❌ أخطأت"]];
   $app.innerHTML = `<p><a href="#bac">← مواضيع البكالوريا</a></p>
     <div class="card"><h2>${bacSource(x)}</h2>
-      <p class="mute">${BAC_STREAM} · ${x.ch.map(chName).join("، ")} · ${fmtPts(x.points)} نقاط</p>
+      <p class="mute">${streamOf(x.stream).name} · ${x.ch.map(chName).join("، ")} · ${fmtPts(x.points)} نقاط</p>
       <div class="statement">${lines(x.intro)}</div>
       ${x.fig ? `<img class="fig" src="bac/fig/${attr(x.fig)}" alt="الشكل المرفق بالتمرين">` : ""}</div>
     ${x.parts.map((p, i) => `<div class="card part" data-i="${i}">
@@ -641,10 +668,11 @@ function chooser(ch) {
 }
 
 // اختبار متوازن: سؤال من كل وحدة ثم سؤالان إضافيان من الأصعب
-function examQuestions() {
-  const picked = CHAPTERS.map(c => shuffle(QUESTIONS.filter(q => q.ch === c.id))[0]);
-  const rest = shuffle(QUESTIONS.filter(q => !picked.includes(q) && q.d >= 2)).slice(0, 10 - picked.length);
-  return shuffle(picked.concat(rest));
+function examQuestions() { // من وحدات شعبة التلميذ
+  const ids = statChs(myStream()).map(c => c.id), pool = QUESTIONS.filter(q => ids.includes(q.ch));
+  const picked = ids.map(id => shuffle(pool.filter(q => q.ch === id))[0]).filter(Boolean);
+  const others = pool.filter(q => !picked.includes(q));
+  return shuffle(picked.concat(shuffle(others.filter(q => q.d >= 2)), shuffle(others.filter(q => q.d < 2))).slice(0, 10));
 }
 
 // ---------- التوجيه ----------

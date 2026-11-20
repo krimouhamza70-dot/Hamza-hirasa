@@ -36,11 +36,11 @@ function client() {
 test("التسجيل والدخول والخروج", async () => {
   const c = client();
   assert.equal((await c("me")).body.user, null);
-  const reg = await c("register", { name: "أمين", login: "0555 12 34 56", password: "secret1", role: "student" });
+  const reg = await c("register", { name: "أمين", login: "0555 12 34 56", password: "secret1", role: "student", stream: "se" });
   assert.equal(reg.status, 200);
   assert.match(reg.body.user.linkCode, /^[A-Z2-9]{6}$/);
   assert.equal((await c("me")).body.user.name, "أمين");
-  assert.equal((await c("register", { name: "x2", login: "0555123456", password: "secret1", role: "student" })).status, 409, "نفس الرقم بمسافات");
+  assert.equal((await c("register", { name: "x2", login: "0555123456", password: "secret1", role: "student", stream: "se" })).status, 409, "نفس الرقم بمسافات");
   await c("logout", {});
   assert.equal((await c("me")).body.user, null);
   assert.equal((await c("login", { login: "0555123456", password: "wrong!!" })).status, 401);
@@ -49,8 +49,8 @@ test("التسجيل والدخول والخروج", async () => {
 
 test("رفض البيانات غير الصالحة", async () => {
   const c = client();
-  assert.equal((await c("register", { name: "a", login: "x@y.dz", password: "secret1", role: "student" })).status, 400);
-  assert.equal((await c("register", { name: "علي", login: "x@y.dz", password: "123", role: "student" })).status, 400);
+  assert.equal((await c("register", { name: "a", login: "x@y.dz", password: "secret1", role: "student", stream: "se" })).status, 400);
+  assert.equal((await c("register", { name: "علي", login: "x@y.dz", password: "123", role: "student", stream: "se" })).status, 400);
   assert.equal((await c("register", { name: "علي", login: "x@y.dz", password: "secret1", role: "admin" })).status, 400);
   const r = await fetch(BASE + "/api/login", { method: "POST", body: "login=a", headers: { "Content-Type": "application/x-www-form-urlencoded" } });
   assert.equal(r.status, 415, "يقبل JSON فقط (حماية من CSRF)");
@@ -58,7 +58,7 @@ test("رفض البيانات غير الصالحة", async () => {
 
 test("الخادم يصحح الإجابة بنفسه", async () => {
   const c = client();
-  await c("register", { name: "سارة", login: "sara@mail.dz", password: "secret1", role: "student" });
+  await c("register", { name: "سارة", login: "sara@mail.dz", password: "secret1", role: "student", stream: "se" });
   assert.equal((await c("attempts", { qid: 1, k: 1 })).body.ok, true);   // الجواب الصحيح للسؤال 1 هو 1
   assert.equal((await c("attempts", { qid: 1, k: 0 })).body.ok, false);
   assert.equal((await c("attempts", { qid: 1, k: null })).body.ok, false); // لم يُجب
@@ -70,7 +70,7 @@ test("الخادم يصحح الإجابة بنفسه", async () => {
 
 test("نقل نتائج وضع الضيف", async () => {
   const c = client();
-  await c("register", { name: "يوسف", login: "youcef@mail.dz", password: "secret1", role: "student" });
+  await c("register", { name: "يوسف", login: "youcef@mail.dz", password: "secret1", role: "student", stream: "se" });
   const now = Date.now();
   const r = await c("attempts/import", { items: [{ qid: 2, ok: true, ts: now - 1000 }, { qid: 3, ok: false, ts: now - 500 }, { qid: 9999, ok: true, ts: now }, { qid: 2, ok: true, ts: now + 1e9 }] });
   assert.equal(r.body.imported, 2, "يتجاهل الأسئلة غير الموجودة والتواريخ المستقبلية");
@@ -79,7 +79,7 @@ test("نقل نتائج وضع الضيف", async () => {
 
 test("الربط بين الولي والتلميذ وعزل البيانات", async () => {
   const s = client(), p = client(), other = client();
-  const code = (await s("register", { name: "ريم", login: "rim@mail.dz", password: "secret1", role: "student" })).body.user.linkCode;
+  const code = (await s("register", { name: "ريم", login: "rim@mail.dz", password: "secret1", role: "student", stream: "se" })).body.user.linkCode;
   await s("attempts", { qid: 4, k: 0 });
   await p("register", { name: "والد ريم", login: "0661000000", password: "secret1", role: "parent" });
   await other("register", { name: "ولي آخر", login: "0662000000", password: "secret1", role: "parent" });
@@ -110,12 +110,12 @@ test("الأستاذ: الأقسام والواجبات وتقدم التلام�
   const t = client(), t2 = client(), s1 = client(), s2 = client(), out = client();
   await t("register", { name: "الأستاذ حمزة", login: "prof@mail.dz", password: "secret1", role: "teacher" });
   await t2("register", { name: "أستاذ آخر", login: "prof2@mail.dz", password: "secret1", role: "teacher" });
-  await s1("register", { name: "تلميذ أ", login: "s1@mail.dz", password: "secret1", role: "student" });
-  await s2("register", { name: "تلميذ ب", login: "s2@mail.dz", password: "secret1", role: "student" });
-  await out("register", { name: "تلميذ خارج القسم", login: "s3@mail.dz", password: "secret1", role: "student" });
+  await s1("register", { name: "تلميذ أ", login: "s1@mail.dz", password: "secret1", role: "student", stream: "se" });
+  await s2("register", { name: "تلميذ ب", login: "s2@mail.dz", password: "secret1", role: "student", stream: "se" });
+  await out("register", { name: "تلميذ خارج القسم", login: "s3@mail.dz", password: "secret1", role: "student", stream: "se" });
 
-  assert.equal((await s1("classes", { name: "قسم" })).status, 403, "التلميذ لا ينشئ قسماً");
-  const cls = (await t("classes", { name: "3 علوم تجريبية 1" })).body.class;
+  assert.equal((await s1("classes", { name: "قسم", stream: "se" })).status, 403, "التلميذ لا ينشئ قسماً");
+  const cls = (await t("classes", { name: "3 علوم تجريبية 1", stream: "se" })).body.class;
   assert.match(cls.code, /^[A-Z2-9]{6}$/);
   assert.equal((await s1("classes/join", { code: "XXXXXX" })).status, 404);
   assert.equal((await s1("classes/join", { code: cls.code.toLowerCase() })).status, 200);
@@ -178,7 +178,7 @@ test("بنك الأسئلة: إضافة الأستاذ ومراجعة المدي
   const me = (await admin("register", { name: "المدير", login: "admin@mail.dz", password: "secret1", role: "teacher" })).body.user;
   assert.equal(me.admin, true, "المدير يُعرف من ADMIN_LOGINS");
   assert.equal((await t("me")).body.user.admin, undefined);
-  await s("register", { name: "تلميذ", login: "stud@mail.dz", password: "secret1", role: "student" });
+  await s("register", { name: "تلميذ", login: "stud@mail.dz", password: "secret1", role: "student", stream: "se" });
 
   const before = (await guest("questions")).body;
   assert.equal(before.questions.length, 61);
@@ -202,11 +202,11 @@ test("بنك الأسئلة: إضافة الأستاذ ومراجعة المدي
   assert.equal((await s("attempts", { qid: id, k: 0 })).status, 400, "التلميذ لا يجيب على سؤال غير مراجع خارج الواجبات");
 
   // الأستاذ يستعمل سؤاله في واجب قبل المراجعة
-  const cls = (await t("classes", { name: "قسم ليلى" })).body.class;
+  const cls = (await t("classes", { name: "قسم ليلى", stream: "se" })).body.class;
   await s("classes/join", { code: cls.code });
   const hw = (await t(`classes/${cls.id}/assignments`, { title: "واجب", chapter: "exp", difficulty: 2, count: 20 })).body.assignment;
   assert.ok(hw.qids.includes(id), "أسئلة الأستاذ قيد المراجعة تدخل في واجباته");
-  const other = (await t2("classes", { name: "قسم آخر" })).body.class;
+  const other = (await t2("classes", { name: "قسم آخر", stream: "se" })).body.class;
   const hw2 = (await t2(`classes/${other.id}/assignments`, { title: "واجب", chapter: "exp", difficulty: 2, count: 20 })).body.assignment;
   assert.ok(!hw2.qids.includes(id), "ولا تدخل في واجبات غيره");
   assert.ok((await s("questions")).body.questions.some(x => x.id === id), "التلميذ يرى سؤال واجبه");
@@ -238,17 +238,39 @@ test("بنك الأسئلة: إضافة الأستاذ ومراجعة المدي
 
 test("مواضيع البكالوريا: حفظ التقييم الذاتي", async () => {
   const s = client(), p = client();
-  await s("register", { name: "تلميذة", login: "bac@mail.dz", password: "secret1", role: "student" });
+  await s("register", { name: "تلميذة", login: "bac@mail.dz", password: "secret1", role: "student", stream: "se" });
   await p("register", { name: "ولي", login: "bacp@mail.dz", password: "secret1", role: "parent" });
   assert.match(await (await fetch(BASE + "/bac.js")).text(), /تمرين تجريبي/);
-  assert.equal((await s("bac/progress", { eid: "2000-1-1", part: 0, score: 1 })).status, 200);
-  assert.equal((await s("bac/progress", { eid: "2000-1-1", part: 2, score: 0.5 })).status, 200);
-  assert.equal((await s("bac/progress", { eid: "2000-1-1", part: 0, score: 0 })).status, 200, "تغيير التقييم");
-  assert.equal((await s("bac/progress", { eid: "2000-1-1", part: 3, score: 1 })).status, 400, "جزء غير موجود");
+  assert.equal((await s("bac/progress", { eid: "se-2000-1-1", part: 0, score: 1 })).status, 200);
+  assert.equal((await s("bac/progress", { eid: "se-2000-1-1", part: 2, score: 0.5 })).status, 200);
+  assert.equal((await s("bac/progress", { eid: "se-2000-1-1", part: 0, score: 0 })).status, 200, "تغيير التقييم");
+  assert.equal((await s("bac/progress", { eid: "se-2000-1-1", part: 3, score: 1 })).status, 400, "جزء غير موجود");
   assert.equal((await s("bac/progress", { eid: "1999-9-9", part: 0, score: 1 })).status, 400, "تمرين غير موجود");
-  assert.equal((await s("bac/progress", { eid: "2000-1-1", part: 1, score: 0.7 })).status, 400, "تقييم غير صالح");
-  assert.equal((await p("bac/progress", { eid: "2000-1-1", part: 0, score: 1 })).status, 403);
-  assert.deepEqual((await s("bac/progress")).body.progress, { "2000-1-1": { 0: 0, 2: 0.5 } });
+  assert.equal((await s("bac/progress", { eid: "se-2000-1-1", part: 1, score: 0.7 })).status, 400, "تقييم غير صالح");
+  assert.equal((await p("bac/progress", { eid: "se-2000-1-1", part: 0, score: 1 })).status, 403);
+  assert.deepEqual((await s("bac/progress")).body.progress, { "se-2000-1-1": { 0: 0, 2: 0.5 } });
   assert.equal((await fetch(BASE + "/bac/fig/../../server/server.js")).status, 404);
   assert.equal((await fetch(BASE + "/bac/fig/nope.png")).status, 404);
+});
+
+test("الشعب", async () => {
+  const s = client(), t = client(), p = client();
+  assert.equal((await s("register", { name: "بلا شعبة", login: "nostream@mail.dz", password: "secret1", role: "student" })).status, 400, "التلميذ يجب أن يختار شعبته");
+  assert.equal((await s("register", { name: "شعبة خاطئة", login: "badstream@mail.dz", password: "secret1", role: "student", stream: "xx" })).status, 400);
+  const u = (await s("register", { name: "تلميذ رياضيات", login: "math@mail.dz", password: "secret1", role: "student", stream: "m" })).body.user;
+  assert.equal(u.stream, "m");
+  assert.equal((await s("me/stream", { stream: "ge" })).body.user.stream, "ge");
+  assert.equal((await s("me")).body.user.stream, "ge");
+  await t("register", { name: "أستاذ", login: "tstream@mail.dz", password: "secret1", role: "teacher" });
+  assert.equal((await t("me/stream", { stream: "ge" })).status, 403);
+  assert.equal((await t("classes", { name: "قسم بلا شعبة" })).status, 400, "القسم يحتاج شعبة");
+  const c = (await t("classes", { name: "3 تسيير", stream: "ge" })).body.class;
+  assert.equal(c.stream, "ge");
+  await s("classes/join", { code: c.code });
+  assert.equal((await t(`classes/${c.id}`)).body.class.stream, "ge");
+  assert.equal((await t(`classes/${c.id}/students/${u.id}/attempts`)).body.stream, "ge");
+  await p("register", { name: "ولي", login: "pstream@mail.dz", password: "secret1", role: "parent" });
+  await p("children/link", { code: u.linkCode });
+  assert.equal((await p("children")).body.children[0].stream, "ge");
+  assert.equal((await p(`children/${u.id}/attempts`)).body.stream, "ge");
 });

@@ -79,6 +79,7 @@ div.opt{cursor:default;padding:10px 16px;border-radius:8px}
 .fig{display:block;max-width:100%;height:auto;margin:12px auto;border:1px solid var(--line);border-radius:8px;background:#fff}
 .part .sol{margin-top:10px;padding-top:10px;border-top:1px dashed var(--line)}
 .rate{display:flex;gap:8px;flex-wrap:wrap}.rate button.on{background:var(--pri);color:var(--card)}
+label.inline{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0}label.inline select{width:auto;min-width:160px}
 :focus-visible{outline:3px solid var(--warn);outline-offset:2px}
 table{font-variant-numeric:tabular-nums}.tablewrap{overflow-x:auto}
 .timer{font-weight:700;color:var(--warn)}

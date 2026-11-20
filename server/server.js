@@ -21,8 +21,11 @@ const ADMINS = new Set(String(process.env.ADMIN_LOGINS || "").split(",").map(x =
 // ---------- الأسئلة المدمجة (data.js و solutions.js) تُنقل إلى قاعدة البيانات عند أول تشغيل ----------
 const ctx = vm.createContext({});
 vm.runInContext(fs.readFileSync(path.join(ROOT, "data.js"), "utf8") + fs.readFileSync(path.join(ROOT, "solutions.js"), "utf8") +
-  ";this.Q = QUESTIONS; this.C = CHAPTERS; this.S = SOLUTIONS;", ctx);
+  ";this.Q = QUESTIONS; this.C = CHAPTERS; this.S = SOLUTIONS; this.ST = STREAMS;", ctx);
 const CHAPTER_IDS = new Set(ctx.C.map(c => c.id));
+const STREAM_IDS = new Set(ctx.ST.map(x => x.id));
+const STREAM_CH = new Map(ctx.ST.map(x => [x.id, x.ch]));
+const validStream = v => { if (!STREAM_IDS.has(v)) throw new HttpError(400, "اختر الشعبة"); return v; };
 // مواضيع البكالوريا (ملف ثابت). BAC_FILE يسمح باستعمال ملف آخر في الاختبارات
 const BAC_FILE = process.env.BAC_FILE || path.join(ROOT, "bac.js");
 const bctx = vm.createContext({});
@@ -120,6 +123,9 @@ if (!q("SELECT sql FROM sqlite_master WHERE name = 'users'").get().sql.includes(
     INSERT INTO users_new SELECT id, name, login, pass, role, link_code, created FROM users;
     DROP TABLE users; ALTER TABLE users_new RENAME TO users; COMMIT; PRAGMA foreign_keys = ON;`);
 }
+const hasCol = (t, c) => q(`PRAGMA table_info(${t})`).all().some(x => x.name === c);
+if (!hasCol("users", "stream")) db.exec("ALTER TABLE users ADD COLUMN stream TEXT");          // شعبة التلميذ
+if (!hasCol("classes", "stream")) db.exec("ALTER TABLE classes ADD COLUMN stream TEXT NOT NULL DEFAULT 'se'");
 if (!q("PRAGMA table_info(attempts)").all().some(c => c.name === "assignment_id")) {
   db.exec("ALTER TABLE attempts ADD COLUMN assignment_id INTEGER REFERENCES assignments(id) ON DELETE SET NULL");
 }
@@ -183,11 +189,11 @@ function sessionCookie(token, maxAge) {
 }
 function currentUser(req) {
   const t = cookieOf(req).sid; if (!t) return null;
-  return q(`SELECT u.id, u.name, u.role, u.link_code, u.login FROM sessions s JOIN users u ON u.id = s.user_id
+  return q(`SELECT u.id, u.name, u.role, u.link_code, u.login, u.stream FROM sessions s JOIN users u ON u.id = s.user_id
             WHERE s.token_hash = ? AND s.expires > ?`).get(sha(t), Date.now()) || null;
 }
 const isAdmin = u => !!u && ADMINS.has(u.login);
-function publicUser(u) { return u && { id: u.id, name: u.name, role: u.role, ...(u.role === "student" ? { linkCode: u.link_code } : {}), ...(isAdmin(u) ? { admin: true } : {}) }; }
+function publicUser(u) { return u && { id: u.id, name: u.name, role: u.role, ...(u.role === "student" ? { linkCode: u.link_code, stream: u.stream || "se" } : {}), ...(isAdmin(u) ? { admin: true } : {}) }; }
 function startSession(res, user) {
   const token = crypto.randomBytes(32).toString("base64url");
   q("INSERT INTO sessions (token_hash, user_id, expires) VALUES (?, ?, ?)").run(sha(token), user.id, Date.now() + SESSION_DAYS * 864e5);
@@ -217,7 +223,7 @@ function validQuestion(b) {
   return { ch: b.ch, d: b.d, q: text, o, a: b.a, e, s: sSteps, w };
 }
 function ownClass(u, id) {
-  const c = q("SELECT id, name, code FROM classes WHERE id = ? AND teacher_id = ?").get(Number(id), u.id);
+  const c = q("SELECT id, name, code, stream FROM classes WHERE id = ? AND teacher_id = ?").get(Number(id), u.id);
   if (!c) throw new HttpError(404, "القسم غير موجود");
   return c;
 }
@@ -246,17 +252,18 @@ async function api(req, res, url) {
     const login = str(b.login, 4, 100, "أدخل رقم هاتف أو بريداً إلكترونياً صحيحاً").toLowerCase().replace(/\s+/g, "");
     if (typeof b.password !== "string" || b.password.length < 6 || b.password.length > 200) throw new HttpError(400, "كلمة السر يجب أن تحتوي 6 أحرف على الأقل");
     if (!["student", "parent", "teacher"].includes(b.role)) throw new HttpError(400, "اختر نوع الحساب");
+    const stream = b.role === "student" ? validStream(b.stream) : null;
     if (q("SELECT 1 FROM users WHERE login = ?").get(login)) throw new HttpError(409, "يوجد حساب بهذا الرقم أو البريد، سجّل الدخول بدلاً من ذلك");
-    const r = q("INSERT INTO users (name, login, pass, role, link_code, created) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(name, login, hashPassword(b.password), b.role, b.role === "student" ? newLinkCode() : null, Date.now());
-    return startSession(res, q("SELECT id, name, role, link_code, login FROM users WHERE id = ?").get(Number(r.lastInsertRowid)));
+    const r = q("INSERT INTO users (name, login, pass, role, link_code, created, stream) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(name, login, hashPassword(b.password), b.role, b.role === "student" ? newLinkCode() : null, Date.now(), stream);
+    return startSession(res, q("SELECT id, name, role, link_code, login, stream FROM users WHERE id = ?").get(Number(r.lastInsertRowid)));
   }
 
   if (route === "POST /api/login") {
     if (limited(ip)) throw new HttpError(429, "محاولات كثيرة، أعد المحاولة بعد 15 دقيقة");
     const b = await readJson(req);
     const login = String(b.login || "").trim().toLowerCase().replace(/\s+/g, "");
-    const u = q("SELECT id, name, role, link_code, login, pass FROM users WHERE login = ?").get(login);
+    const u = q("SELECT id, name, role, link_code, login, stream, pass FROM users WHERE login = ?").get(login);
     const okPw = checkPassword(String(b.password || ""), u ? u.pass : DUMMY_HASH);
     if (!u || !okPw) throw new HttpError(401, "رقم الهاتف/البريد أو كلمة السر غير صحيحة");
     return startSession(res, u);
@@ -265,6 +272,13 @@ async function api(req, res, url) {
   if (route === "POST /api/logout") {
     const t = cookieOf(req).sid; if (t) q("DELETE FROM sessions WHERE token_hash = ?").run(sha(t));
     return send(res, 200, { ok: true }, { "Set-Cookie": sessionCookie("", 0) });
+  }
+
+  if (route === "POST /api/me/stream") { // التلميذ يغير شعبته
+    need(user, "student");
+    const stream = validStream((await readJson(req)).stream);
+    q("UPDATE users SET stream = ? WHERE id = ?").run(stream, user.id);
+    return send(res, 200, { user: publicUser({ ...user, stream }) });
   }
 
   if (route === "GET /api/attempts") { need(user, "student"); return send(res, 200, { history: history(user.id) }); }
@@ -300,7 +314,7 @@ async function api(req, res, url) {
 
   if (route === "GET /api/children") {
     need(user, "parent");
-    const children = q(`SELECT u.id, u.name, COUNT(a.id) AS attempts, COALESCE(SUM(a.ok), 0) AS correct, MAX(a.ts) AS last
+    const children = q(`SELECT u.id, u.name, COALESCE(u.stream, 'se') AS stream, COUNT(a.id) AS attempts, COALESCE(SUM(a.ok), 0) AS correct, MAX(a.ts) AS last
                         FROM links l JOIN users u ON u.id = l.student_id LEFT JOIN attempts a ON a.user_id = u.id
                         WHERE l.parent_id = ? GROUP BY u.id ORDER BY u.name`).all(user.id);
     return send(res, 200, { children });
@@ -320,17 +334,17 @@ async function api(req, res, url) {
   // ---------- الأستاذ: الأقسام والواجبات ----------
   if (route === "GET /api/classes") {
     need(user, "teacher");
-    return send(res, 200, { classes: q(`SELECT c.id, c.name, c.code, COUNT(m.student_id) AS students FROM classes c
+    return send(res, 200, { classes: q(`SELECT c.id, c.name, c.code, c.stream, COUNT(m.student_id) AS students FROM classes c
       LEFT JOIN class_members m ON m.class_id = c.id WHERE c.teacher_id = ? GROUP BY c.id ORDER BY c.created DESC`).all(user.id) });
   }
   if (route === "POST /api/classes") {
     need(user, "teacher");
     const b = await readJson(req);
-    const name = str(b.name, 2, 60, "اسم القسم يجب أن يكون بين 2 و 60 حرفاً");
+    const name = str(b.name, 2, 60, "اسم القسم يجب أن يكون بين 2 و 60 حرفاً"), stream = validStream(b.stream);
     if (q("SELECT COUNT(*) AS n FROM classes WHERE teacher_id = ?").get(user.id).n >= 30) throw new HttpError(400, "الحد الأقصى 30 قسماً");
     const code = newCode(c => q("SELECT 1 FROM classes WHERE code = ?").get(c));
-    const r = q("INSERT INTO classes (teacher_id, name, code, created) VALUES (?, ?, ?, ?)").run(user.id, name, code, Date.now());
-    return send(res, 200, { class: { id: Number(r.lastInsertRowid), name, code, students: 0 } });
+    const r = q("INSERT INTO classes (teacher_id, name, code, created, stream) VALUES (?, ?, ?, ?, ?)").run(user.id, name, code, Date.now(), stream);
+    return send(res, 200, { class: { id: Number(r.lastInsertRowid), name, code, stream, students: 0 } });
   }
   let m;
   if (req.method === "GET" && (m = url.pathname.match(/^\/api\/classes\/(\d+)$/))) {
@@ -347,7 +361,7 @@ async function api(req, res, url) {
     }
     const assignments = q("SELECT id, title, qids, due, created FROM assignments WHERE class_id = ? ORDER BY created DESC").all(c.id)
       .map(a => ({ id: a.id, title: a.title, qids: JSON.parse(a.qids), due: a.due, created: a.created, progress: progressOf(a.id) }));
-    return send(res, 200, { class: { id: c.id, name: c.name, code: c.code }, students, assignments });
+    return send(res, 200, { class: { id: c.id, name: c.name, code: c.code, stream: c.stream }, students, assignments });
   }
   if (req.method === "POST" && (m = url.pathname.match(/^\/api\/classes\/(\d+)\/assignments$/))) {
     need(user, "teacher");
@@ -360,8 +374,10 @@ async function api(req, res, url) {
     const due = b.due === null || b.due === undefined || b.due === "" ? null : Number(b.due);
     if (due !== null && (!Number.isFinite(due) || due < Date.now() - 864e5)) throw new HttpError(400, "تاريخ التسليم غير صالح");
     // الأسئلة المقبولة + أسئلة الأستاذ نفسه التي لم تُراجع بعد
-    const pool = q(`SELECT id, d FROM questions WHERE (status = 'approved' OR (author_id = ? AND status = 'pending'))
+    let pool = q(`SELECT id, d, ch FROM questions WHERE (status = 'approved' OR (author_id = ? AND status = 'pending'))
                     AND (? = '' OR ch = ?) AND (? = 0 OR d = ?)`).all(user.id, chapter, chapter, difficulty, difficulty);
+    const streamCh = STREAM_CH.get(c.stream) || [];
+    pool = chapter ? pool : pool.filter(x => streamCh.includes(x.ch)); // «كل الوحدات» = وحدات شعبة القسم
     if (!pool.length) throw new HttpError(400, "لا توجد أسئلة بهذه الشروط");
     const qids = pool.map(x => [crypto.randomInt(1e9), x]).sort((a, z) => a[0] - z[0]).slice(0, count)
       .map(p => p[1]).sort((a, z) => a.d - z.d).map(x => x.id); // من الأسهل إلى الأصعب
@@ -377,9 +393,9 @@ async function api(req, res, url) {
   if (req.method === "GET" && (m = url.pathname.match(/^\/api\/classes\/(\d+)\/students\/(\d+)\/attempts$/))) {
     need(user, "teacher");
     const c = ownClass(user, m[1]);
-    const s = q(`SELECT u.id, u.name FROM class_members m JOIN users u ON u.id = m.student_id WHERE m.class_id = ? AND u.id = ?`).get(c.id, Number(m[2]));
+    const s = q(`SELECT u.id, u.name, COALESCE(u.stream, 'se') AS stream FROM class_members m JOIN users u ON u.id = m.student_id WHERE m.class_id = ? AND u.id = ?`).get(c.id, Number(m[2]));
     if (!s) throw new HttpError(404, "هذا التلميذ ليس في القسم");
-    return send(res, 200, { name: s.name, history: history(s.id) });
+    return send(res, 200, { name: s.name, stream: s.stream, history: history(s.id) });
   }
 
   // ---------- التلميذ: الانضمام إلى قسم والواجبات ----------
@@ -491,9 +507,9 @@ async function api(req, res, url) {
   m = url.pathname.match(/^\/api\/children\/(\d+)\/attempts$/);
   if (req.method === "GET" && m) {
     need(user, "parent");
-    const s = q(`SELECT u.id, u.name FROM links l JOIN users u ON u.id = l.student_id WHERE l.parent_id = ? AND l.student_id = ?`).get(user.id, Number(m[1]));
+    const s = q(`SELECT u.id, u.name, COALESCE(u.stream, 'se') AS stream FROM links l JOIN users u ON u.id = l.student_id WHERE l.parent_id = ? AND l.student_id = ?`).get(user.id, Number(m[1]));
     if (!s) throw new HttpError(404, "هذا التلميذ غير مرتبط بحسابك");
-    return send(res, 200, { name: s.name, history: history(s.id) });
+    return send(res, 200, { name: s.name, stream: s.stream, history: history(s.id) });
   }
 
   throw new HttpError(404, "غير موجود");
