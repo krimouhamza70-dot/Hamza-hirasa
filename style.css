@@ -8,7 +8,8 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);line
 header{background:var(--head);color:#fff;padding-block:14px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
 header .in{max-width:900px;margin:auto;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
 header h1{margin:0;font-size:20px}
-nav a{color:#fff;text-decoration:none;margin-inline-start:14px;opacity:.9;font-size:15px}
+nav{display:flex;flex-wrap:wrap;gap:4px 16px}
+nav a{color:#fff;text-decoration:none;opacity:.9;font-size:15px;white-space:nowrap}
 nav a:hover{opacity:1;text-decoration:underline}
 main{max-width:900px;margin:auto;padding-block:16px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
@@ -25,7 +26,7 @@ button.opt:hover:not(:disabled){border-color:var(--pri)}
 .opt.ok{border-color:var(--ok);background:rgba(31,157,99,.12)}
 .opt.bad{border-color:var(--bad);background:rgba(214,69,69,.12)}
 .q{font-size:18px}
-.m{unicode-bidi:isolate;white-space:nowrap}
+.m{unicode-bidi:isolate}
 .bar{height:10px;background:var(--line);border-radius:6px;overflow:hidden}
 .bar>i{display:block;height:100%;background:var(--pri)}
 .row{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
@@ -74,6 +75,10 @@ form label.radio{display:flex;align-items:center;gap:4px;margin:0;white-space:no
 .qitem{padding:10px 0;border-top:1px solid var(--line)}.qitem:first-child{border-top:0}.qitem .row .row{gap:6px}
 .small{font-size:13px}.opt .small{margin-top:4px}
 div.opt{cursor:default;padding:10px 16px;border-radius:8px}
+.statement{line-height:2;margin:8px 0}
+.fig{display:block;max-width:100%;height:auto;margin:12px auto;border:1px solid var(--line);border-radius:8px;background:#fff}
+.part .sol{margin-top:10px;padding-top:10px;border-top:1px dashed var(--line)}
+.rate{display:flex;gap:8px;flex-wrap:wrap}.rate button.on{background:var(--pri);color:var(--card)}
 :focus-visible{outline:3px solid var(--warn);outline-offset:2px}
 table{font-variant-numeric:tabular-nums}.tablewrap{overflow-x:auto}
 .timer{font-weight:700;color:var(--warn)}

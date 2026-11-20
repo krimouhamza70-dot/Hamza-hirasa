@@ -6,6 +6,15 @@ let online = false, user = null, cache = null;
 // QUESTIONS = الأسئلة المنشورة فقط، وهي المستعملة في التدريب والاختبار
 let ALLQ = QUESTIONS.slice();
 const isPublic = x => !x.status || x.status === "approved";
+// تقدم مواضيع البكالوريا: {eid: {part: score}} — من الخادم للتلميذ المسجّل، وإلا من المتصفح
+const BKEY = "bacmath.bac.v1";
+let bacProg = null;
+const bacLocal = () => { try { return JSON.parse(localStorage.getItem(BKEY)) || {}; } catch { return {}; } };
+const bacGet = () => bacProg || bacLocal();
+function bacSet(eid, part, score) {
+  if (bacProg) { (bacProg[eid] ||= {})[part] = score; api("bac/progress", { eid, part, score }).catch(() => {}); }
+  else { const p = bacLocal(); (p[eid] ||= {})[part] = score; try { localStorage.setItem(BKEY, JSON.stringify(p)); } catch {} }
+}
 const chName = id => (CHAPTERS.find(c => c.id === id) || {}).name || "";
 const localHistory = () => { try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch { return []; } };
 const load = () => cache ? cache.slice() : localHistory();
@@ -65,13 +74,19 @@ async function setUser(u) {
     const local = localHistory(); // نقل نتائج وضع الضيف إلى الحساب مرة واحدة
     if (local.length) { try { await api("attempts/import", { items: local }); localStorage.removeItem(KEY); } catch {} }
     cache = (await api("attempts")).history;
-  }
+    const localBac = bacLocal(); // نقل تقييمات البكالوريا من وضع الضيف
+    for (const [eid, parts] of Object.entries(localBac)) for (const [part, score] of Object.entries(parts))
+      await api("bac/progress", { eid, part: Number(part), score }).catch(() => {});
+    try { localStorage.removeItem(BKEY); } catch {}
+    bacProg = (await api("bac/progress")).progress;
+  } else bacProg = null;
   if (online) { try { await loadBank(); } catch {} }
   const acc = document.getElementById("acc");
   if (acc) { acc.hidden = !online; acc.textContent = user ? "👤 " + user.name : "دخول / حساب جديد"; }
 }
 
 // العدد مع المعدود حسب قواعد العربية: [مفرد، مثنى، جمع (3–10)، تمييز (11 فأكثر)]
+const EXS = ["تمرين واحد", "تمرينان", "تمارين", "تمريناً"], PARTS = ["جزء واحد", "جزءان", "أجزاء", "جزءاً"];
 const QS = ["سؤال واحد", "سؤالان", "أسئلة", "سؤالاً"], STUD = ["تلميذ واحد", "تلميذان", "تلاميذ", "تلميذاً"], ANS = ["إجابة واحدة", "إجابتان", "إجابات", "إجابة"];
 const nOf = (n, f) => n === 1 ? f[0] : n === 2 ? f[1] : `${n} ${n % 100 >= 3 && n % 100 <= 10 ? f[2] : f[3]}`;
 const dateStr = t => new Date(t).toLocaleDateString("ar-DZ");
@@ -547,6 +562,76 @@ async function review() {
   });
 }
 
+// ---------- مواضيع البكالوريا ----------
+const SUBJ = { 1: "الموضوع الأول", 2: "الموضوع الثاني" };
+const lines = t => String(t).split("\n").map(M).join("<br>");
+const bacSource = x => `بكالوريا ${x.year} · ${SUBJ[x.subject] || "الموضوع " + x.subject} · التمرين ${x.num}`;
+// العلامة التقديرية في تمرين: مجموع (التقييم × نقاط الجزء)
+function bacScore(x, prog = bacGet()[x.id] || {}) {
+  const done = x.parts.filter((_, i) => prog[i] !== undefined).length;
+  const got = x.parts.reduce((t, p, i) => t + (prog[i] || 0) * (p.pts || 0), 0);
+  return { done, got };
+}
+const fmtPts = n => Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0$/, "");
+let bacFilter = { year: "", ch: "" };
+function bacList() {
+  const years = [...new Set(BAC.map(x => x.year))].sort((a, b) => b - a);
+  const shown = BAC.filter(x => (!bacFilter.year || x.year === +bacFilter.year) && (!bacFilter.ch || x.ch.includes(bacFilter.ch)))
+    .sort((a, b) => b.year - a.year || a.subject - b.subject || a.num - b.num);
+  const prog = bacGet();
+  const solved = BAC.filter(x => bacScore(x, prog[x.id] || {}).done === x.parts.length).length;
+  $app.innerHTML = `<div class="card"><h2>مواضيع البكالوريا · ${BAC_STREAM}</h2>
+    ${BAC.length ? `<p class="mute">${nOf(BAC.length, EXS)} من المواضيع الرسمية، مع الحل المفصل لكل جزء. حل التمرين على ورقتك، ثم قارن حلك وقيّم نفسك. أنجزت ${solved} منها.</p>
+      <div class="grid2">
+        <label>السنة<select id="fy"><option value="">كل السنوات</option>${years.map(y => `<option${String(y) === bacFilter.year ? " selected" : ""}>${y}</option>`).join("")}</select></label>
+        <label>الوحدة<select id="fc"><option value="">كل الوحدات</option>${CHAPTERS.filter(c => BAC.some(x => x.ch.includes(c.id))).map(c => `<option value="${c.id}"${c.id === bacFilter.ch ? " selected" : ""}>${c.name}</option>`).join("")}</select></label>
+      </div>` : `<p class="mute">لم تُضف مواضيع البكالوريا بعد. نعمل على إضافة مواضيع شعبة ${BAC_STREAM} من 2008 إلى 2026 مع حلولها المفصلة.</p>`}</div>
+    ${shown.length ? `<div class="card">${shown.map(x => { const sc = bacScore(x, prog[x.id] || {}), all = sc.done === x.parts.length;
+      return `<div class="hw row"><div><b>${bacSource(x)}</b><br>
+          <span class="mute">${x.ch.map(chName).join("، ")} · ${fmtPts(x.points)} نقاط · ${nOf(x.parts.length, PARTS)}</span><br>
+          <span class="${all ? "okt" : "mute"}">${!sc.done ? "لم تبدأ بعد" : all ? `✅ أنجزته · علامتك التقديرية ${fmtPts(sc.got)} / ${fmtPts(x.points)}` : `قيّمت ${sc.done} من ${x.parts.length} أجزاء`}</span></div>
+        <a class="btn ${all ? "sec" : ""}" href="#bacx-${x.id}">${all ? "مراجعة" : sc.done ? "أكمل" : "ابدأ"}</a></div>`; }).join("")}</div>`
+      : BAC.length ? `<div class="card"><p class="mute">لا توجد تمارين بهذه الشروط.</p></div>` : ""}`;
+  for (const [id, key] of [["fy", "year"], ["fc", "ch"]]) { const el = document.getElementById(id); if (el) el.onchange = () => { bacFilter[key] = el.value; bacList(); }; }
+}
+function bacExercise(id) {
+  const x = BAC.find(e => e.id === id);
+  if (!x) return failed(new Error("هذا التمرين غير موجود"), "#bac");
+  const prog = bacGet()[x.id] || {};
+  const RATE = [[1, "✅ حللته صحيحاً"], [0.5, "½ صحيح جزئياً"], [0, "❌ أخطأت"]];
+  $app.innerHTML = `<p><a href="#bac">← مواضيع البكالوريا</a></p>
+    <div class="card"><h2>${bacSource(x)}</h2>
+      <p class="mute">${BAC_STREAM} · ${x.ch.map(chName).join("، ")} · ${fmtPts(x.points)} نقاط</p>
+      <div class="statement">${lines(x.intro)}</div>
+      ${x.fig ? `<img class="fig" src="bac/fig/${attr(x.fig)}" alt="الشكل المرفق بالتمرين">` : ""}</div>
+    ${x.parts.map((p, i) => `<div class="card part" data-i="${i}">
+      <p class="q"><b>${esc(p.label || "")}</b> ${lines(p.q)} ${p.pts ? `<span class="tag">${fmtPts(p.pts)} ن</span>` : ""}</p>
+      <button type="button" class="sec show">أظهر الحل</button>
+      <div class="sol" hidden>
+        <p><b>الجواب:</b> ${lines(p.ans)}</p>
+        <b>الحل المفصل:</b><ol class="steps">${p.s.map(t => `<li>${lines(t)}</li>`).join("")}</ol>
+        <p><b>قارن حلك بالحل، ثم قيّم نفسك:</b></p>
+        <div class="rate">${RATE.map(([v, t]) => `<button type="button" class="sec${prog[i] === v ? " on" : ""}" data-v="${v}">${t}</button>`).join("")}</div>
+      </div></div>`).join("")}
+    <div class="card" id="bsum"></div>`;
+  const summary = () => {
+    const sc = bacScore(x);
+    document.getElementById("bsum").innerHTML = sc.done
+      ? `<h2>علامتك التقديرية: ${fmtPts(sc.got)} / ${fmtPts(x.points)}</h2><p class="mute">قيّمت ${sc.done} من ${x.parts.length} أجزاء. العلامة محسوبة على سلم التنقيط الرسمي للتمرين.</p>`
+      : `<p class="mute">حل كل جزء على ورقتك أولاً، ثم اضغط «أظهر الحل» وقيّم نفسك لتحصل على علامتك التقديرية.</p>`;
+  };
+  document.querySelectorAll(".part").forEach(card => {
+    const i = +card.dataset.i, sol = card.querySelector(".sol"), show = card.querySelector(".show");
+    if (prog[i] !== undefined) { sol.hidden = false; show.hidden = true; }
+    show.onclick = () => { sol.hidden = false; show.hidden = true; };
+    card.querySelectorAll(".rate button").forEach(b => b.onclick = () => {
+      bacSet(x.id, i, Number(b.dataset.v));
+      card.querySelectorAll(".rate button").forEach(o => o.classList.toggle("on", o === b)); summary();
+    });
+  });
+  summary();
+}
+
 // ---------- اختيار مستوى الصعوبة ----------
 function chooser(ch) {
   const qs = QUESTIONS.filter(q => q.ch === ch.id);
@@ -565,6 +650,8 @@ function examQuestions() {
 // ---------- التوجيه ----------
 function route() {
   clearInterval(timerId);
+  if (location.hash.startsWith("#bacx-")) return bacExercise(location.hash.slice(6));
+  if (location.hash === "#bac") return bacList();
   const [page, arg, lvl] = location.hash.slice(1).split("-");
   if (page === "practice") {
     const ch = CHAPTERS.find(c => c.id === arg);

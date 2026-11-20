@@ -23,6 +23,11 @@ const ctx = vm.createContext({});
 vm.runInContext(fs.readFileSync(path.join(ROOT, "data.js"), "utf8") + fs.readFileSync(path.join(ROOT, "solutions.js"), "utf8") +
   ";this.Q = QUESTIONS; this.C = CHAPTERS; this.S = SOLUTIONS;", ctx);
 const CHAPTER_IDS = new Set(ctx.C.map(c => c.id));
+// مواضيع البكالوريا (ملف ثابت). BAC_FILE يسمح باستعمال ملف آخر في الاختبارات
+const BAC_FILE = process.env.BAC_FILE || path.join(ROOT, "bac.js");
+const bctx = vm.createContext({});
+vm.runInContext(fs.readFileSync(BAC_FILE, "utf8") + ";this.B = BAC;", bctx);
+const BAC_PARTS = new Map(bctx.B.map(x => [x.id, x.parts.length]));
 const FIRST_TEACHER_QID = 10001; // أسئلة الأساتذة تبدأ من هذا الرقم حتى لا تتعارض مع الأسئلة المدمجة
 
 // ---------- قاعدة البيانات ----------
@@ -89,6 +94,14 @@ db.exec(`
     note TEXT,
     created INTEGER NOT NULL,
     updated INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS bac_progress (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    eid TEXT NOT NULL,
+    part INTEGER NOT NULL,
+    score REAL NOT NULL,      -- تقييم ذاتي: 0 أو 0.5 أو 1
+    ts INTEGER NOT NULL,
+    PRIMARY KEY (user_id, eid, part)
   );
   CREATE TABLE IF NOT EXISTS assignments (
     id INTEGER PRIMARY KEY,
@@ -391,6 +404,24 @@ async function api(req, res, url) {
     return send(res, 200, { classes, assignments });
   }
 
+  // ---------- مواضيع البكالوريا: تقدم التلميذ ----------
+  if (route === "GET /api/bac/progress") {
+    need(user, "student");
+    const progress = {};
+    for (const r of q("SELECT eid, part, score FROM bac_progress WHERE user_id = ?").all(user.id)) (progress[r.eid] ||= {})[r.part] = r.score;
+    return send(res, 200, { progress });
+  }
+  if (route === "POST /api/bac/progress") {
+    need(user, "student");
+    const b = await readJson(req);
+    const n = BAC_PARTS.get(b.eid);
+    if (!n || !Number.isInteger(b.part) || b.part < 0 || b.part >= n) throw new HttpError(400, "تمرين غير موجود");
+    if (![0, 0.5, 1].includes(b.score)) throw new HttpError(400, "تقييم غير صالح");
+    q(`INSERT INTO bac_progress (user_id, eid, part, score, ts) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (user_id, eid, part) DO UPDATE SET score = excluded.score, ts = excluded.ts`).run(user.id, b.eid, b.part, b.score, Date.now());
+    return send(res, 200, { ok: true });
+  }
+
   // ---------- بنك الأسئلة ----------
   if (route === "GET /api/questions") {
     // الجميع: المقبولة. التلميذ: + أسئلة واجباته. الأستاذ: + أسئلته بكل حالاتها.
@@ -470,8 +501,9 @@ async function api(req, res, url) {
 
 // ---------- الملفات الثابتة ----------
 const STATIC = { "/": "index.html", "/index.html": "index.html", "/style.css": "style.css", "/data.js": "data.js",
-  "/solutions.js": "solutions.js", "/stats.js": "stats.js", "/app.js": "app.js" };
-const TYPES = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8" };
+  "/solutions.js": "solutions.js", "/stats.js": "stats.js", "/app.js": "app.js", "/bac.js": BAC_FILE };
+const TYPES = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8",
+  ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" };
 const SECURITY_HEADERS = {
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "same-origin",
@@ -480,10 +512,13 @@ const SECURITY_HEADERS = {
 };
 function serveStatic(req, res, url) {
   if (url.pathname === "/favicon.ico") { res.writeHead(204, SECURITY_HEADERS); return res.end(); }
-  const file = STATIC[url.pathname];
-  if (!file || !["GET", "HEAD"].includes(req.method)) { res.writeHead(404, SECURITY_HEADERS); return res.end("Not found"); }
-  res.writeHead(200, { "Content-Type": TYPES[path.extname(file)], "Cache-Control": "no-cache", ...SECURITY_HEADERS });
-  res.end(req.method === "HEAD" ? undefined : fs.readFileSync(path.join(ROOT, file)));
+  let file = STATIC[url.pathname];
+  const fig = url.pathname.match(/^\/bac\/fig\/([A-Za-z0-9_-]+\.(?:png|jpe?g|webp))$/); // أشكال التمارين فقط، بأسماء آمنة
+  if (fig) file = path.join("bac", "fig", fig[1]);
+  const full = file && path.resolve(ROOT, file);
+  if (!full || !["GET", "HEAD"].includes(req.method) || !fs.existsSync(full)) { res.writeHead(404, SECURITY_HEADERS); return res.end("Not found"); }
+  res.writeHead(200, { "Content-Type": TYPES[path.extname(full).toLowerCase()], "Cache-Control": fig ? "max-age=86400" : "no-cache", ...SECURITY_HEADERS });
+  res.end(req.method === "HEAD" ? undefined : fs.readFileSync(full));
 }
 
 const server = http.createServer(async (req, res) => {

@@ -13,7 +13,7 @@ let proc;
 
 before(async () => {
   proc = spawn(process.execPath, ["--no-warnings", path.join(__dirname, "..", "server", "server.js")],
-    { env: { ...process.env, PORT, DB_PATH: path.join(dir, "t.db"), RATE_LIMIT: "1000", ADMIN_LOGINS: "Admin@Mail.dz, 0770 00 00 00" }, stdio: "ignore" });
+    { env: { ...process.env, PORT, DB_PATH: path.join(dir, "t.db"), BAC_FILE: path.join(__dirname, "fixtures", "bac.sample.js"), RATE_LIMIT: "1000", ADMIN_LOGINS: "Admin@Mail.dz, 0770 00 00 00" }, stdio: "ignore" });
   for (let i = 0; i < 50; i++) { try { await fetch(BASE + "/api/me"); return; } catch { await new Promise(r => setTimeout(r, 100)); } }
   throw new Error("server did not start");
 });
@@ -234,4 +234,21 @@ test("بنك الأسئلة: إضافة الأستاذ ومراجعة المدي
   // المدير يعدل سؤالاً مدمجاً
   assert.equal((await admin("questions/1", { ...good, ch: "lim", d: 1 })).status, 200);
   assert.equal((await t2("questions/1", good)).status, 403);
+});
+
+test("مواضيع البكالوريا: حفظ التقييم الذاتي", async () => {
+  const s = client(), p = client();
+  await s("register", { name: "تلميذة", login: "bac@mail.dz", password: "secret1", role: "student" });
+  await p("register", { name: "ولي", login: "bacp@mail.dz", password: "secret1", role: "parent" });
+  assert.match(await (await fetch(BASE + "/bac.js")).text(), /تمرين تجريبي/);
+  assert.equal((await s("bac/progress", { eid: "2000-1-1", part: 0, score: 1 })).status, 200);
+  assert.equal((await s("bac/progress", { eid: "2000-1-1", part: 2, score: 0.5 })).status, 200);
+  assert.equal((await s("bac/progress", { eid: "2000-1-1", part: 0, score: 0 })).status, 200, "تغيير التقييم");
+  assert.equal((await s("bac/progress", { eid: "2000-1-1", part: 3, score: 1 })).status, 400, "جزء غير موجود");
+  assert.equal((await s("bac/progress", { eid: "1999-9-9", part: 0, score: 1 })).status, 400, "تمرين غير موجود");
+  assert.equal((await s("bac/progress", { eid: "2000-1-1", part: 1, score: 0.7 })).status, 400, "تقييم غير صالح");
+  assert.equal((await p("bac/progress", { eid: "2000-1-1", part: 0, score: 1 })).status, 403);
+  assert.deepEqual((await s("bac/progress")).body.progress, { "2000-1-1": { 0: 0, 2: 0.5 } });
+  assert.equal((await fetch(BASE + "/bac/fig/../../server/server.js")).status, 404);
+  assert.equal((await fetch(BASE + "/bac/fig/nope.png")).status, 404);
 });
