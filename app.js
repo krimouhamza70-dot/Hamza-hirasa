@@ -5,6 +5,7 @@ const save = h => { try { localStorage.setItem(KEY, JSON.stringify(h)); } catch 
 const shuffle = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0; [a[i], a[j]] = [a[j], a[i]]; } return a; };
 const pct = x => Math.round(x * 100);
 let timerId = null;
+const inFrame = (() => { try { return window.self !== window.top; } catch { return true; } })();
 
 // عزل المقاطع الرياضية (اتجاه يسار←يمين) داخل النص العربي حتى لا ينقلب ترتيبها.
 // السهم ← وعلامات «» والأقواس غير المتوازنة وعلامات الترقيم في الآخر تبقى في السياق العربي.
@@ -44,11 +45,11 @@ function home() {
   </div>
   <div class="card"><h2>الوحدات</h2>
     ${st.map(c => `<div style="margin:12px 0"><div class="row"><b>${c.name}</b>
-      <span class="mute">${c.correct}/${c.attempts} · إتقان ${pct(c.mastery)}%</span></div>
-      <div class="bar"><i style="width:${pct(c.mastery)}%"></i></div>
-      <a class="btn sec" style="margin-top:6px;padding:4px 12px" href="#/practice/${c.id}">تدرّب</a></div>`).join("")}
+      <span class="mute">${c.attempts ? `${c.correct}/${c.attempts} · إتقان ${pct(c.mastery)}%` : "لم تبدأ بعد"}</span></div>
+      <div class="bar"><i style="width:${c.attempts ? pct(c.mastery) : 0}%"></i></div>
+      <a class="btn sec" style="margin-top:6px;padding:4px 12px" href="#practice-${c.id}">تدرّب</a></div>`).join("")}
   </div>
-  <div class="card row"><span>اختبار مدته ٢٠ دقيقة من ١٠ أسئلة تغطي كل الوحدات</span><a class="btn" href="#/exam">ابدأ الاختبار</a></div>`;
+  <div class="card row"><span>اختبار مدته ٢٠ دقيقة من ١٠ أسئلة تغطي كل الوحدات</span><a class="btn" href="#exam">ابدأ الاختبار</a></div>`;
 }
 
 // ---------- جلسة أسئلة (تدريب أو اختبار) ----------
@@ -95,7 +96,7 @@ function runQuiz({ questions, exam, title }) {
     const mark = (score / qs.length * 20).toFixed(1);
     $app.innerHTML = `<div class="card" style="text-align:center"><h2>انتهت الجلسة</h2>
       <div class="big">${score} / ${qs.length}</div><div class="mute">العلامة: ${mark} / 20</div>
-      <p><a class="btn" href="#/">لوحة النتائج</a></p></div>
+      <p><a class="btn" href="#home">لوحة النتائج</a></p></div>
       ${exam ? `<div class="card"><h2>التصحيح</h2>${qs.map((q, n) => `<p>${answers[n] === q.a ? "✅" : "❌"} ${M(q.q)}<br><span class="mute">الجواب: ${M(q.o[q.a])} — ${M(q.e)}</span></p>`).join("")}</div>` : ""}`;
   }
   show();
@@ -108,16 +109,22 @@ function report() {
     <p>التاريخ: ${new Date().toLocaleDateString("ar-DZ")}</p>
     <p>عدد الأسئلة المحلولة: <b>${p.attempts}</b> — العلامة المتوقعة: <b>${p.attempts ? p.score.toFixed(1) + " / 20" : "—"}</b>
       ${p.attempts && p.reliable ? `(${p.low.toFixed(1)} – ${p.high.toFixed(1)})` : ""}</p>
-    <table style="width:100%;border-collapse:collapse">
+    <div class="tablewrap"><table style="width:100%;border-collapse:collapse">
       <tr style="text-align:start"><th>الوحدة</th><th>محاولات</th><th>صحيحة</th><th>الإتقان</th><th>التوصية</th></tr>
-      ${st.map(c => `<tr style="border-top:1px solid var(--line)"><td>${c.name}</td><td>${c.attempts}</td><td>${c.correct}</td><td>${pct(c.mastery)}%</td>
+      ${st.map(c => `<tr style="border-top:1px solid var(--line)"><td>${c.name}</td><td>${c.attempts}</td><td>${c.correct}</td><td>${c.attempts ? pct(c.mastery) + "%" : "—"}</td>
         <td>${!c.attempts ? "لم تُدرَّس بعد" : c.mastery < .5 ? "⚠️ تحتاج مراجعة" : c.mastery < .75 ? "جيد — واصل" : "ممتاز"}</td></tr>`).join("")}
-    </table>
+    </table></div>
     <h2 style="margin-top:16px">حسب مستوى الصعوبة</h2>
     ${[1, 2, 3].map(d => { const ids = new Set(QUESTIONS.filter(q => q.d === d).map(q => q.id)), x = h.filter(r => ids.has(r.qid)), c = x.filter(r => r.ok).length;
       return `<p>${DIFF[d]}: <b>${x.length ? pct(c / x.length) + "%" : "—"}</b> <span class="mute">(${c}/${x.length})</span></p>`; }).join("")}
-    <p class="noprint" style="margin-top:12px"><button onclick="print()">طباعة</button>
-      <button class="sec" onclick="if(confirm('مسح كل النتائج؟')){localStorage.removeItem(KEY);report()}">مسح النتائج</button></p></div>`;
+    <p class="noprint row" style="margin-top:12px;justify-content:flex-start">${inFrame ? "" : `<button id="prt">طباعة</button>`}
+      <button class="sec" id="clr">مسح النتائج</button></p></div>`;
+  const prt = document.getElementById("prt"); if (prt) prt.onclick = () => print();
+  const clr = document.getElementById("clr");
+  clr.onclick = () => { // تأكيد بضغطتين بدل نافذة confirm
+    if (clr.dataset.armed) { try { localStorage.removeItem(KEY); } catch {} report(); return; }
+    clr.dataset.armed = "1"; clr.textContent = "اضغط مرة أخرى لتأكيد المسح";
+  };
 }
 
 // ---------- اختيار مستوى الصعوبة ----------
@@ -125,7 +132,7 @@ function chooser(ch) {
   const qs = QUESTIONS.filter(q => q.ch === ch.id);
   $app.innerHTML = `<div class="card"><h2>${ch.name}</h2><p class="mute">اختر مستوى الصعوبة</p>
     <div class="grid">${[0, 1, 2, 3].map(d => { const n = d ? qs.filter(q => q.d === d).length : qs.length;
-      return n ? `<a class="btn ${d ? "sec" : ""}" href="#/practice/${ch.id}/${d}">${d ? DIFF[d] : "الكل"} (${n})</a>` : ""; }).join("")}</div></div>`;
+      return n ? `<a class="btn ${d ? "sec" : ""}" href="#practice-${ch.id}-${d}">${d ? DIFF[d] : "الكل"} (${n})</a>` : ""; }).join("")}</div></div>`;
 }
 
 // اختبار متوازن: سؤال من كل وحدة ثم سؤالان إضافيان من الأصعب
@@ -138,7 +145,7 @@ function examQuestions() {
 // ---------- التوجيه ----------
 function route() {
   clearInterval(timerId);
-  const [, page, arg, lvl] = location.hash.split("/");
+  const [page, arg, lvl] = location.hash.slice(1).split("-");
   if (page === "practice") {
     const ch = CHAPTERS.find(c => c.id === arg);
     if (ch && lvl === undefined) return chooser(ch);
