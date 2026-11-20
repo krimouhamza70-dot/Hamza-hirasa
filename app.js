@@ -15,6 +15,8 @@ function iso(run) {
   const lead = run.match(/^\s*/)[0], trail = run.slice(lead.length).match(/\s*$/)[0];
   let core = run.slice(lead.length, run.length - trail.length);
   if (!core) return run;
+  const pre = core.match(/^[.,:;!?]+\s*/); // علامة ترقيم تابعة للجملة العربية السابقة
+  if (pre) return lead + pre[0] + iso(core.slice(pre[0].length)) + trail;
   const open = []; let cut = -1;
   for (let i = 0; i < core.length && cut < 0; i++) {
     if (core[i] === "(") open.push(i);
@@ -29,6 +31,24 @@ function iso(run) {
 const M = text => text.replace(/[^\u0600-\u06FF←«»]+/g, run => iso(run));
 
 function record(qid, ok) { const h = load(); h.push({ qid, ok, ts: Date.now() }); save(h); }
+
+// ---------- الحل المفصل ----------
+// k = رقم الخيار الذي اختاره التلميذ (أو undefined إن لم يُجب)
+function steps(q) {
+  const sol = typeof SOLUTIONS !== "undefined" && SOLUTIONS[q.id];
+  return sol ? `<ol class="steps">${sol.s.map(x => `<li>${M(x)}</li>`).join("")}</ol>` : `<p>${M(q.e)}</p>`;
+}
+function correction(q, k) {
+  const sol = typeof SOLUTIONS !== "undefined" && SOLUTIONS[q.id];
+  if (k === q.a) return `<div class="expl"><b class="okt">✅ إجابة صحيحة</b><p>${M(q.e)}</p>
+    <details><summary>عرض الحل المفصل</summary>${steps(q)}</details></div>`;
+  const why = k !== undefined && sol && sol.w[k];
+  return `<div class="expl wrong">
+    <b class="badt">${k === undefined ? "⏳ لم تُجب عن هذا السؤال" : `❌ إجابة خاطئة: اخترت ${M(q.o[k])}`}</b>
+    ${why ? `<div class="why"><b>لماذا هذا الجواب خاطئ؟</b><br>${M(why)}</div>` : ""}
+    <p><b>الجواب الصحيح:</b> ${M(q.o[q.a])}</p>
+    <b>الحل المفصل:</b>${steps(q)}</div>`;
+}
 
 // ---------- الصفحة الرئيسية ----------
 function home() {
@@ -87,7 +107,7 @@ function runQuiz({ questions, exam, title }) {
     const ok = k === q.a; if (ok) score++; record(q.id, ok);
     document.querySelectorAll(".opt").forEach(b => { b.disabled = true; if (+b.dataset.k === q.a) b.classList.add("ok"); });
     if (!ok) btn.classList.add("bad");
-    document.getElementById("fb").innerHTML = `<div class="expl">${ok ? "✅ إجابة صحيحة" : "❌ إجابة خاطئة"}<br>${M(q.e)}</div>`;
+    document.getElementById("fb").innerHTML = correction(q, k);
     document.getElementById("next").disabled = false;
   }
   function finish() {
@@ -97,7 +117,7 @@ function runQuiz({ questions, exam, title }) {
     $app.innerHTML = `<div class="card" style="text-align:center"><h2>انتهت الجلسة</h2>
       <div class="big">${score} / ${qs.length}</div><div class="mute">العلامة: ${mark} / 20</div>
       <p><a class="btn" href="#home">لوحة النتائج</a></p></div>
-      ${exam ? `<div class="card"><h2>التصحيح</h2>${qs.map((q, n) => `<p>${answers[n] === q.a ? "✅" : "❌"} ${M(q.q)}<br><span class="mute">الجواب: ${M(q.o[q.a])} — ${M(q.e)}</span></p>`).join("")}</div>` : ""}`;
+      ${exam ? `<div class="card"><h2>التصحيح</h2>${qs.map((q, n) => `<div class="corr"><p class="q"><span class="tag">${n + 1}</span> ${M(q.q)}</p>${correction(q, answers[n])}</div>`).join("")}</div>` : ""}`;
   }
   show();
 }
