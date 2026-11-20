@@ -5,7 +5,10 @@
   "description": "منصة رياضيات الباك",
   "scripts": {
     "start": "node --no-warnings server/server.js",
-    "test": "node --no-warnings --test test/*.test.js"
+    "test": "node --no-warnings --test test/*.test.js",
+    "build:bac": "node tools/build-bac.js"
   },
-  "engines": { "node": ">=22.13" }
+  "engines": {
+    "node": ">=22.13"
+  }
 }

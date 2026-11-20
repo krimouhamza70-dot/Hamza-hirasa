@@ -647,6 +647,7 @@ function bacExercise(id) {
       <div class="sol" hidden>
         <p><b>الجواب:</b> ${lines(p.ans)}</p>
         <b>الحل المفصل:</b><ol class="steps">${p.s.map(t => `<li>${lines(t)}</li>`).join("")}</ol>
+        ${p.sfig ? `<img class="fig" src="bac/fig/${attr(p.sfig)}" alt="الرسم المطلوب" loading="lazy">` : ""}
         <p><b>قارن حلك بالحل، ثم قيّم نفسك:</b></p>
         <div class="rate">${RATE.map(([v, t]) => `<button type="button" class="sec${prog[i] === v ? " on" : ""}" data-v="${v}">${t}</button>`).join("")}</div>
       </div></div>`).join("")}
